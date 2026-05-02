@@ -27,12 +27,11 @@ struct alignas(16) ObjectConstants {
 struct alignas(16) PassConstants {
 	DirectX::XMFLOAT4X4 ViewProj = dx::Identity4x4();
 
-	DirectX::XMFLOAT3 EyePosW = { .0f, .0f, .0f };
+	DirectX::XMFLOAT3 EyePosW = { 0.f, 0.f, 0.f };
 	float _pad0 = 0.0f;
 
-	DirectX::XMFLOAT3 LightDirW = { .0f, .0f, .0f };
-	//float _pad1 =0.f;
-	float Time = .0f;
+	DirectX::XMFLOAT3 LightDirW = { 0.f, 0.f, 0.f };
+	float Time = 0.f;
 
 	DirectX::XMFLOAT4 Ambient = { 0.2f, 0.2f, 0.2f, 1.0f };
 	DirectX::XMFLOAT4 Diffuse = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -45,15 +44,71 @@ struct alignas(16) PassConstants {
 struct alignas(16) MaterialConstants {
 	DirectX::XMFLOAT4 DiffuseAlbedo = { 1,1,1,1 };
 
-	DirectX::XMFLOAT2 UVScale = { 1,1 };  
-	DirectX::XMFLOAT2 UVOffset = { 0,0 };   
+	DirectX::XMFLOAT2 UVScale = { 1,1 };
+	DirectX::XMFLOAT2 UVOffset = { 0,0 };
 
-	DirectX::XMFLOAT2 UVSpeed = { 0,0 }; 
-	int DiffuseTexIndex = 0;            
+	DirectX::XMFLOAT2 UVSpeed = { 0,0 };
+	int DiffuseTexIndex = 0;
 	float _pad = 0.0f;
+};
+
+
+static constexpr int kMaxDirLights = 4;
+static constexpr int kMaxPointLights = 16;
+static constexpr int kMaxSpotLights = 8;
+
+struct alignas(16) DirectionalLight
+{
+	DirectX::XMFLOAT3 Direction = { 0.577f, -0.577f, 0.577f };
+	float pad0 = 0.0f;
+	DirectX::XMFLOAT3 Color = { 1.0f, 1.0f, 1.0f };
+	float Intensity = 1.0f;
+};
+static_assert(sizeof(DirectionalLight) == 32);
+
+struct alignas(16) PointLight
+{
+	DirectX::XMFLOAT3 Position = { 0.0f, 0.0f, 0.0f };
+	float Range = 10.0f;
+	DirectX::XMFLOAT3 Color = { 1.0f, 1.0f, 1.0f };
+	float Intensity = 1.0f;
+};
+static_assert(sizeof(PointLight) == 32);
+
+struct alignas(16) SpotLight
+{
+	DirectX::XMFLOAT3 Position = { 0.0f, 0.0f, 0.0f };
+	float Range = 10.0f;
+	DirectX::XMFLOAT3 Direction = { 0.0f, -1.0f, 0.0f };
+	float InnerCosAngle = 0.95f; 
+	DirectX::XMFLOAT3 Color = { 1.0f, 1.0f, 1.0f };
+	float OuterCosAngle = 0.85f; 
+	float Intensity = 1.0f;
+	DirectX::XMFLOAT3 pad = {};
+};
+static_assert(sizeof(SpotLight) == 64);
+
+struct alignas(16) LightingConstants
+{
+	DirectionalLight DirLights[kMaxDirLights];
+	PointLight PointLights[kMaxPointLights];
+	SpotLight SpotLights[kMaxSpotLights];
+
+	DirectX::XMFLOAT3 EyePosW = { 0.0f, 0.0f, 0.0f };
+	float pad0 = 0.0f;
+
+	DirectX::XMFLOAT4 Ambient = { 0.1f, 0.1f, 0.1f, 1.0f };
+	DirectX::XMFLOAT4X4 InvViewProj = {};
+
+	float SpecPower = 32.0f;
+	int NumDirLights = 0;
+	int NumPointLights = 0;
+	int NumSpotLights = 0;
 };
 
 static_assert(sizeof(ObjectConstants) % 16 == 0, "ObjectConstants must be 16-byte aligned sized.");
 static_assert(sizeof(PassConstants) % 16 == 0, "PassConstants must be 16-byte aligned sized.");
 static_assert(sizeof(MaterialConstants) % 16 == 0, "MaterialConstants must be 16-byte aligned sized.");
-#endif // !RENDER_STRUCTS_HPP
+static_assert(sizeof(LightingConstants) % 16 == 0, "LightingConstants must be 16-byte aligned sized.");
+
+#endif // RENDER_STRUCTS_HPP

@@ -11,6 +11,8 @@
 #include "Dx12Common.hpp"
 #include "UploadBuffer.hpp"
 #include "RenderStructs.hpp"
+#include "Gbuffer.hpp"
+#include "RenderingSystem.hpp"
 #include <wincodec.h>
 #include <wrl.h>
 #include <vector>
@@ -22,7 +24,7 @@ public:
 	virtual ~Framework();
 
 	bool Init();
-	int Run();
+	int  Run();
 
 	LRESULT MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) override;
 
@@ -36,21 +38,21 @@ protected:
 	virtual void OnMouseUp(HWND hwnd, WPARAM btnState, int x, int y);
 	virtual void OnMouseMove(HWND hwnd, WPARAM btnState, int x, int y);
 
-	HWND MainWnd() const { return m_window ? m_window->GetHWND() : nullptr; }
-	int ClientWidth() const { return m_clientWidth; }
-	int ClientHeight() const { return m_clientHeight; }
+	HWND MainWnd()    const { return m_window ? m_window->GetHWND() : nullptr; }
+	int  ClientWidth()  const { return m_clientWidth; }
+	int  ClientHeight() const { return m_clientHeight; }
 
 	Timer m_timer;
 
 private:
-	int m_initWidth = 0;
-	int m_initHeight = 0;
+	int            m_initWidth = 0;
+	int            m_initHeight = 0;
 	const wchar_t* m_title = nullptr;
 
 	std::unique_ptr<Window> m_window;
 
-	int m_clientWidth = 0;
-	int m_clientHeight = 0;
+	int  m_clientWidth = 0;
+	int  m_clientHeight = 0;
 
 	bool m_appPaused = false;
 	bool m_minimized = false;
@@ -58,28 +60,29 @@ private:
 	bool m_resizing = false;
 
 	HINSTANCE m_hInstance = nullptr;
+	POINT     m_lastMousePos = { 0, 0 };
 
-	POINT m_lastMousePos = { 0,0 };
+	// D3D12 core
+	ComPtr<IDXGIFactory4>  m_dxgiFactory;
+	ComPtr<IDXGIAdapter1>  m_dxgiAdapter;
+	ComPtr<ID3D12Device>   m_device;
+	std::wstring           m_adapterName;
 
-	ComPtr<IDXGIFactory4> m_dxgiFactory;
-	ComPtr<IDXGIAdapter1> m_dxgiAdapter;
-	ComPtr<ID3D12Device> m_device;
-	std::wstring m_adapterName;
-
-	ComPtr<ID3D12CommandQueue> m_commandQueue;
-	ComPtr<ID3D12CommandAllocator> m_directCmdListAlloc;
-	ComPtr<ID3D12GraphicsCommandList> m_commandList;
+	ComPtr<ID3D12CommandQueue>         m_commandQueue;
+	ComPtr<ID3D12CommandAllocator>     m_directCmdListAlloc;
+	ComPtr<ID3D12GraphicsCommandList>  m_commandList;
 
 	ComPtr<ID3D12Fence> m_fence;
-	UINT64 m_currentFence = 0;
-	HANDLE m_fenceEvent = nullptr;
+	UINT64              m_currentFence = 0;
+	HANDLE              m_fenceEvent = nullptr;
 
 	static const int SwapChainBufferCount = 2;
 
 	ComPtr<IDXGISwapChain4> m_swapChain;
-	int m_currBackBuffer = 0;
+	int                     m_currBackBuffer = 0;
 
 	DXGI_FORMAT m_backBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+	DXGI_FORMAT m_depthStencilFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 
 	ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
 	ComPtr<ID3D12DescriptorHeap> m_dsvHeap;
@@ -91,20 +94,64 @@ private:
 	ComPtr<ID3D12Resource> m_swapChainBuffer[SwapChainBufferCount];
 	ComPtr<ID3D12Resource> m_depthStencilBuffer;
 
-	DXGI_FORMAT m_depthStencilFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 	D3D12_VIEWPORT m_screenViewport = {};
-	D3D12_RECT m_scissorRect = {};
+	D3D12_RECT     m_scissorRect = {};
 
-	ComPtr<ID3DBlob> m_vsByteCode;
-	ComPtr<ID3DBlob> m_psByteCode;
+	// Deferred rendering
+	Gbuffer         m_gbuffer;
+	RenderingSystem m_renderingSystem;
 
-	std::unique_ptr<UploadBuffer<ObjectConstants>> m_objectCB;
-	std::unique_ptr<UploadBuffer<PassConstants>>   m_passCB;
+	// Constant buffers
+	std::unique_ptr<UploadBuffer<ObjectConstants>>  m_objectCB;
+	std::unique_ptr<UploadBuffer<PassConstants>>    m_passCB;
+	std::unique_ptr<UploadBuffer<LightingConstants>> m_lightingCB;
 
-	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_cbvHeap;
 
-	ComPtr<ID3D12RootSignature> m_rootSignature;
-	ComPtr<ID3D12PipelineState> m_pso;
+	ComPtr<ID3D12DescriptorHeap> m_gbufferSrvHeap;
+
+
+	// Model resources
+	std::vector<ComPtr<ID3D12Resource>> m_textures;
+	std::vector<ComPtr<ID3D12Resource>> m_textureUploads;
+	ComPtr<ID3D12DescriptorHeap>        m_srvHeap;
+
+	std::vector<std::unique_ptr<UploadBuffer<MaterialConstants>>> m_materialCBs;
+	std::vector<int> m_matTexIndex;
+
+	struct DrawRange {
+		UINT startVertex;
+		UINT vertexCount;
+		int  materialId;
+	};
+	std::vector<DrawRange> m_drawRanges;
+
+	ComPtr<ID3D12Resource>   m_modelVB;
+	D3D12_VERTEX_BUFFER_VIEW m_modelVBV{};
+	UINT                     m_modelVertexCount = 0;
+
+	DirectX::XMFLOAT3 m_modelCenter = { 0.0f, 0.0f, 0.0f };
+	float             m_modelScale = 1.0f;
+
+	// Box
+	ComPtr<ID3D12Resource>   m_boxVB;
+	ComPtr<ID3D12Resource>   m_boxIB;
+	ComPtr<ID3D12Resource>   m_boxVBUpload;
+	ComPtr<ID3D12Resource>   m_boxIBUpload;
+	D3D12_VERTEX_BUFFER_VIEW m_boxVBView = {};
+	D3D12_INDEX_BUFFER_VIEW  m_boxIBView = {};
+	UINT                     m_boxIndexCount = 0;
+
+
+	// Camera & input
+	std::array<bool, 256> m_keyDown{};
+	float             m_cameraMoveSpeed = 3.0f;
+	DirectX::XMFLOAT3 m_camPos = { 2.0f, 2.0f, -5.0f };
+	DirectX::XMFLOAT3 m_camTarget = { 0.0f, 0.0f,  0.0f };
+	DirectX::XMFLOAT3 m_camUp = { 0.0f, 1.0f,  0.0f };
+	bool  m_rmbDown = false;
+	float m_yaw = 0.0f;
+	float m_pitch = 0.0f;
+	float m_mouseSensitivity = 0.0025f;
 
 	void InitDxgi();
 	void PickAdapter();
@@ -115,84 +162,20 @@ private:
 	void CreateFence();
 	void FlushCommandQueue();
 	void CreateSwapChain();
-	void BuildShaders();
+
 	void BuildConstantBuffers();
-	void BuildCbvHeap();
-	void BuildCbvViews();
-	void BuildRootSignature();
-	void BuildPSO();
+	void BuildGBufferSrvHeap();
 	void BuildObjVB_Upload();
-
 	void BuildBoxGeometry();
-
-	ComPtr<ID3D12Resource> m_boxVB;
-	ComPtr<ID3D12Resource> m_boxIB;
-
-	ComPtr<ID3D12Resource> m_boxVBUpload;
-	ComPtr<ID3D12Resource> m_boxIBUpload;
-
-	D3D12_VERTEX_BUFFER_VIEW m_boxVBView = {};
-	D3D12_INDEX_BUFFER_VIEW  m_boxIBView = {};
-
-	UINT m_boxIndexCount = 0;
-	
-	Microsoft::WRL::ComPtr<ID3D12Resource> m_modelVB;
-	D3D12_VERTEX_BUFFER_VIEW m_modelVBV{};
-	UINT m_modelVertexCount = 0;
-
-	DirectX::XMFLOAT3 m_modelCenter = { 0.0f, 0.0f, 0.0f };
-	float m_modelScale = 1.0f;
-	std::array<bool, 256> m_keyDown{}; 
-
-	float m_cameraMoveSpeed = 3.0f;
-
-	DirectX::XMFLOAT3 m_camPos = { 2.0f, 2.0f, -5.0f };
-	DirectX::XMFLOAT3 m_camTarget = { 0.0f, 0.0f,  0.0f };
-	DirectX::XMFLOAT3 m_camUp = { 0.0f, 1.0f,  0.0f };
-
-	bool  m_rmbDown = false;
-
-	float m_yaw = 0.0f;   
-	float m_pitch = 0.0f;   
-
-	float m_mouseSensitivity = 0.0025f;
-
-
-	ID3D12Resource* CurrentBackBuffer() const {
-		return m_swapChainBuffer[m_currBackBuffer].Get();
-	}
-
-	D3D12_CPU_DESCRIPTOR_HANDLE CurrentBackBufferView() const {
-		D3D12_CPU_DESCRIPTOR_HANDLE h = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-		h.ptr += static_cast<SIZE_T>(m_currBackBuffer) * m_rtvDescriptorSize;
-		return h;
-	}
-
-	D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView() const {
-		return m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
-	}
-
-	//--------------------------
-	std::vector<ComPtr<ID3D12Resource>> m_textures;    
-	std::vector<ComPtr<ID3D12Resource>> m_textureUploads; 
-	ComPtr<ID3D12DescriptorHeap>        m_srvHeap;
-
-	std::vector<std::unique_ptr<UploadBuffer<MaterialConstants>>> m_materialCBs;
-
-	
-	std::vector<int> m_matTexIndex;
-
-	struct DrawRange {
-		UINT startVertex;
-		UINT vertexCount;
-		int  materialId;
-	};
-	std::vector<DrawRange> m_drawRanges;
+	void BuildSrvHeap(UINT textureCount);
 
 	ComPtr<ID3D12Resource> LoadTextureFromFile(
 		const std::wstring& path,
 		ComPtr<ID3D12Resource>& outUpload);
-	void BuildSrvHeap(UINT textureCount);
+
+	ID3D12Resource* CurrentBackBuffer()     const { return m_swapChainBuffer[m_currBackBuffer].Get(); }
+	D3D12_CPU_DESCRIPTOR_HANDLE CurrentBackBufferView() const;
+	D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView()      const;
 };
 
 #endif // FRAMEWORK_HPP

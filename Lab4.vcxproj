@@ -18,6 +18,36 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Framework.cpp" />
+    <ClCompile Include="src\GBuffer.cpp" />
+    <ClCompile Include="src\RenderingSystem.cpp" />
+    <ClCompile Include="src\Timer.cpp" />
+    <ClCompile Include="src\Window.cpp" />
+    <ClCompile Include="src\winMain.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shader\DeferredGeometry.hlsl">
+      <FileType>Document</FileType>
+    </None>
+    <None Include="shader\DeferredLighting.hlsl">
+      <FileType>Document</FileType>
+    </None>
+    <None Include="shader\Phong.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\Dx12Common.hpp" />
+    <ClInclude Include="include\Framework.hpp" />
+    <ClInclude Include="include\GBuffer.hpp" />
+    <ClInclude Include="include\RenderingSystem.hpp" />
+    <ClInclude Include="include\RenderStructs.hpp" />
+    <ClInclude Include="include\Timer.hpp" />
+    <ClInclude Include="include\tiny_obj_loader.h" />
+    <ClInclude Include="include\UploadBuffer.hpp" />
+    <ClInclude Include="include\Window.hpp" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
@@ -102,7 +132,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>./include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>./include; ./shader</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -127,28 +157,6 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="src\Framework.cpp" />
-    <ClCompile Include="src\Timer.cpp" />
-    <ClCompile Include="src\Window.cpp" />
-    <ClCompile Include="src\winMain.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="include\Dx12Common.hpp" />
-    <ClInclude Include="include\Framework.hpp" />
-    <ClInclude Include="include\RenderStructs.hpp" />
-    <ClInclude Include="include\Timer.hpp" />
-    <ClInclude Include="include\tiny_obj_loader.h" />
-    <ClInclude Include="include\UploadBuffer.hpp" />
-    <ClInclude Include="include\Window.hpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="shader\Phong.hlsl">
-      <DisableOptimizations Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</DisableOptimizations>
-      <EnableDebuggingInformation Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</EnableDebuggingInformation>
-      <FileType>Document</FileType>
-    </None>
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
