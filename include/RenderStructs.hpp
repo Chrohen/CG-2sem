@@ -54,7 +54,7 @@ struct alignas(16) MaterialConstants {
 
 
 static constexpr int kMaxDirLights = 4;
-static constexpr int kMaxPointLights = 16;
+static constexpr int kMaxPointLights = 1024;
 static constexpr int kMaxSpotLights = 8;
 
 struct alignas(16) DirectionalLight

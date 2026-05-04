@@ -29,7 +29,7 @@ struct SpotLight
 cbuffer LightingCB : register(b0)
 {
     DirectionalLight gDirLights[4];
-    PointLight gPointLights[16];
+    PointLight gPointLights[1024];
     SpotLight gSpotLights[8];
     
     float3 gEyePosW;
@@ -141,6 +141,9 @@ VSOut VSFullscreen(uint id : SV_VertexID)
 float4 PSLighting(VSOut pin) : SV_Target
 {
     float depth = gDepth.Sample(gSamPoint, pin.UV).r;
+    
+    if(depth >= 1.0f)
+        discard;
 
     float3 worldPos = WorldPosFromDepth(pin.UV, depth);
     float3 albedo = gAlbedo.Sample(gSamPoint, pin.UV).rgb;

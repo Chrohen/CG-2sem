@@ -60,6 +60,7 @@ bool Framework::Init()
 
 	BuildBoxGeometry();
 	BuildObjVB_Upload();
+	InitFallingLights();
 
 	OnResize();
 
@@ -340,17 +341,30 @@ void Framework::Update(const double& dt)
 	XMStoreFloat4x4(&lc.InvViewProj, XMMatrixTranspose(invViewProj));
 
 	// Освещение
+	float deltat = static_cast<float>(m_timer.DeltaTime());
+	for (auto& light : m_fallingLights)
+	{
+		light.position.y += light.velocityY * deltat;
+
+		if (light.position.y <= light.groundLevel)
+		{
+			light.position.y = 20.0f;
+		}
+	}
+
 	lc.NumDirLights = 1;
 	lc.DirLights[0].Direction = { 0.577f, -0.577f, 0.577f };
 	lc.DirLights[0].Color = { 1.0f, 0.95f, 0.85f };
 	lc.DirLights[0].Intensity = 1.0f;
 
-	lc.NumPointLights = 1;
-	float t = static_cast<float>(m_timer.TotalTime());
-	lc.PointLights[0].Position = { cosf(t) * 3.0f, 1.5f, sinf(t) * 3.0f };
-	lc.PointLights[0].Range = 8.0f;
-	lc.PointLights[0].Color = { 0.2f, 0.4f, 1.0f };
-	lc.PointLights[0].Intensity = 3.0f;
+	lc.NumPointLights = (int)m_fallingLights.size();
+	for (size_t i = 0; i < m_fallingLights.size(); ++i)
+	{
+		lc.PointLights[i].Position = m_fallingLights[i].position;
+		lc.PointLights[i].Range = m_fallingLights[i].range;
+		lc.PointLights[i].Color = m_fallingLights[i].color;
+		lc.PointLights[i].Intensity = m_fallingLights[i].intensity;
+	}
 
 	lc.NumSpotLights = 1;
 	lc.SpotLights[0].Position = { 0.0f, 3.0f, 0.0f };
@@ -1206,4 +1220,27 @@ void Framework::OnMouseMove(HWND hwnd, WPARAM btnState, int x, int y)
 	forward = XMVector3Normalize(forward);
 	XMVECTOR pos = XMLoadFloat3(&m_camPos);
 	XMStoreFloat3(&m_camTarget, pos + forward);
+}
+
+void Framework::InitFallingLights()
+{
+	const int numLights = 1000;
+	m_fallingLights.resize(numLights);
+	for (int i = 0; i < numLights; ++i)
+	{
+		float x = (rand() % 4000) / 100.0f - 20.0f;
+		float z = (rand() % 4000) / 100.0f - 20.0f;
+		float y = (rand() % 300) / 10.0f + 5.0f;
+
+		m_fallingLights[i].position = { x, y, z };
+		m_fallingLights[i].range = 3.0f + (rand() % 50) / 10.0f;
+		m_fallingLights[i].color = {
+			(rand() % 100) / 100.0f,
+			(rand() % 100) / 100.0f,
+			(rand() % 100) / 100.0f
+		};
+		m_fallingLights[i].intensity = 1.0f + (rand() % 100) / 50.0f;
+		m_fallingLights[i].velocityY = -2.0f - (rand() % 30) / 30.0f;
+		m_fallingLights[i].groundLevel = -2.0f;
+	}
 }

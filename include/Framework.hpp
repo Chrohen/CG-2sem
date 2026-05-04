@@ -18,6 +18,15 @@
 #include <vector>
 #pragma comment(lib, "windowscodecs.lib")
 
+struct AnimatedPointLight {
+	DirectX::XMFLOAT3 position;
+	float range;
+	DirectX::XMFLOAT3 color;
+	float intensity;
+	float velocityY;
+	float groundLevel;
+};
+
 class Framework : public IWindowMessageHandler {
 public:
 	explicit Framework(int width, int height, const wchar_t* title);
@@ -169,6 +178,8 @@ private:
 	void BuildBoxGeometry();
 	void BuildSrvHeap(UINT textureCount);
 
+	void InitFallingLights();
+
 	ComPtr<ID3D12Resource> LoadTextureFromFile(
 		const std::wstring& path,
 		ComPtr<ID3D12Resource>& outUpload);
@@ -178,6 +189,8 @@ private:
 	D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView()      const;
 
 	bool m_wireframeMode = false;
+
+	std::vector<AnimatedPointLight> m_fallingLights;
 };
 
 #endif // FRAMEWORK_HPP
