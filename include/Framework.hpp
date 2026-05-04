@@ -176,6 +176,8 @@ private:
 	ID3D12Resource* CurrentBackBuffer()     const { return m_swapChainBuffer[m_currBackBuffer].Get(); }
 	D3D12_CPU_DESCRIPTOR_HANDLE CurrentBackBufferView() const;
 	D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView()      const;
+
+	bool m_wireframeMode = false;
 };
 
 #endif // FRAMEWORK_HPP

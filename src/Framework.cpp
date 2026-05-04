@@ -10,6 +10,7 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
+#include "directx/d3dx12.h"
 #include <filesystem>
 #include <vector>
 #include <algorithm>
@@ -138,6 +139,11 @@ LRESULT Framework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		return 0;
 
 	case WM_KEYDOWN: case WM_SYSKEYDOWN:
+		if (wParam == 'O')
+		{
+			m_wireframeMode = !m_wireframeMode;
+			return 0;
+		}
 		m_keyDown[static_cast<uint8_t>(wParam)] = true;
 		return 0;
 	case WM_KEYUP: case WM_SYSKEYUP:
@@ -189,7 +195,7 @@ void Framework::OnResize()
 		SwapChainBufferCount, m_clientWidth, m_clientHeight, m_backBufferFormat, 0));
 	m_currBackBuffer = static_cast<int>(m_swapChain->GetCurrentBackBufferIndex());
 
-	// Создаём RTV для back буферов
+	// RTV для back буферов
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
 	for (UINT i = 0; i < SwapChainBufferCount; ++i) {
 		ThrowIfFailed(m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_swapChainBuffer[i])));
@@ -365,6 +371,56 @@ void Framework::Draw()
 
 	m_commandList->RSSetViewports(1, &m_screenViewport);
 	m_commandList->RSSetScissorRects(1, &m_scissorRect);
+
+	if (m_wireframeMode)
+	{
+		auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_PRESENT,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
+		m_commandList->ResourceBarrier(1, &barrier);
+
+		D3D12_CPU_DESCRIPTOR_HANDLE rtv = CurrentBackBufferView();
+		auto dsv = DepthStencilView();
+		m_commandList->OMSetRenderTargets(1, &rtv, TRUE, &dsv);
+		m_commandList->ClearRenderTargetView(rtv, Colors::Black, 0, nullptr);
+		m_commandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+		m_commandList->SetPipelineState(m_renderingSystem.WireframePSO());
+		m_commandList->SetGraphicsRootSignature(m_renderingSystem.WireframeRootSignature());
+
+		m_commandList->SetGraphicsRootConstantBufferView(0, m_objectCB->Resource()->GetGPUVirtualAddress());
+		m_commandList->SetGraphicsRootConstantBufferView(1, m_passCB->Resource()->GetGPUVirtualAddress());
+
+		m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		if (m_modelVB && m_modelVertexCount > 0)
+		{
+			m_commandList->IASetVertexBuffers(0, 1, &m_modelVBV);
+			for (const auto& range : m_drawRanges)
+				m_commandList->DrawInstanced(range.vertexCount, 1, range.startVertex, 0);
+		}
+		else
+		{
+			m_commandList->IASetVertexBuffers(0, 1, &m_boxVBView);
+			m_commandList->IASetIndexBuffer(&m_boxIBView);
+			m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
+		}
+
+		barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PRESENT);
+		m_commandList->ResourceBarrier(1, &barrier);
+
+		ThrowIfFailed(m_commandList->Close());
+		ID3D12CommandList* cmds[] = { m_commandList.Get() };
+		m_commandQueue->ExecuteCommandLists(1, cmds);
+		ThrowIfFailed(m_swapChain->Present(0, 0));
+		m_currBackBuffer = (m_currBackBuffer + 1) % SwapChainBufferCount;
+
+		FlushCommandQueue();
+		return;
+	}
 
 	m_gbuffer.TransitionToRenderTargets(m_commandList.Get());
 	m_gbuffer.Clear(m_commandList.Get());

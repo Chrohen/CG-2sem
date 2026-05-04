@@ -52,6 +52,9 @@ void RenderingSystem::BuildShaders()
 
 	m_lightingVsByteCode = CompileShader(L"shader\\DeferredLighting.hlsl", nullptr, "VSFullscreen", "vs_5_1");
 	m_lightingPsByteCode = CompileShader(L"shader\\DeferredLighting.hlsl", nullptr, "PSLighting", "ps_5_1");
+
+	m_wireframeVsByteCode = CompileShader(L"shader\\Wireframe.hlsl", nullptr, "VS", "vs_5_1");
+	m_wireframePsByteCode = CompileShader(L"shader\\Wireframe.hlsl", nullptr, "PS", "ps_5_1");
 }
 
 void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
@@ -163,6 +166,24 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 			D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
 
 		m_lightingRootSignature = CreateRootSignature(device, desc);
+	}
+
+	{
+		D3D12_ROOT_PARAMETER params[2] = {};
+		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[0].Descriptor.ShaderRegister = 0;
+		params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[1].Descriptor.ShaderRegister = 1;
+		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+		D3D12_ROOT_SIGNATURE_DESC desc = {};
+		desc.NumParameters = _countof(params);
+		desc.pParameters = params;
+		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+		m_wireframeRootSignature = CreateRootSignature(device, desc);
 	}
 }
 
@@ -276,5 +297,49 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.SampleDesc.Quality = 0;
 
 		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_lightingPso)));
+	}
+
+	{
+		D3D12_INPUT_ELEMENT_DESC inputLayout[] =
+		{
+			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+			 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12,
+			 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24,
+			 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32,
+			 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		};
+
+		D3D12_RASTERIZER_DESC rasterizer = DefaultRasterizer(D3D12_CULL_MODE_NONE);
+		rasterizer.FillMode = D3D12_FILL_MODE_WIREFRAME;
+
+		D3D12_BLEND_DESC blendDesc = {};
+		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+		blendDesc.RenderTarget[0].BlendEnable = FALSE;
+
+		D3D12_DEPTH_STENCIL_DESC dsDesc = {};
+		dsDesc.DepthEnable = TRUE;
+		dsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+		dsDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+		dsDesc.StencilEnable = FALSE;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+		psoDesc.InputLayout = { inputLayout, _countof(inputLayout) };
+		psoDesc.pRootSignature = m_wireframeRootSignature.Get();
+		psoDesc.VS = { m_wireframeVsByteCode->GetBufferPointer(), m_wireframeVsByteCode->GetBufferSize() };
+		psoDesc.PS = { m_wireframePsByteCode->GetBufferPointer(), m_wireframePsByteCode->GetBufferSize() };
+		psoDesc.RasterizerState = rasterizer;
+		psoDesc.BlendState = blendDesc;
+		psoDesc.DepthStencilState = dsDesc;
+		psoDesc.SampleMask = UINT_MAX;
+		psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		psoDesc.NumRenderTargets = 1;
+		psoDesc.RTVFormats[0] = backBufferFormat;
+		psoDesc.DSVFormat = depthStencilFormat;
+		psoDesc.SampleDesc.Count = 1;
+
+		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_wireframePso)));
 	}
 }

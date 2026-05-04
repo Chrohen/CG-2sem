@@ -18,6 +18,8 @@ public:
 	ID3D12RootSignature* LightingRootSignature() const { return m_lightingRootSignature.Get(); }
 	ID3D12PipelineState* LightingPSO() const { return m_lightingPso.Get(); }
 
+	ID3D12RootSignature* WireframeRootSignature() const { return m_wireframeRootSignature.Get(); }
+	ID3D12PipelineState* WireframePSO() const { return m_wireframePso.Get(); }
 private:
 	ComPtr<ID3DBlob> m_geometryVsByteCode;
 	ComPtr<ID3DBlob> m_geometryPsByteCode;
@@ -29,6 +31,11 @@ private:
 
 	ComPtr<ID3D12PipelineState> m_geometryPso;
 	ComPtr<ID3D12PipelineState> m_lightingPso;
+
+	ComPtr<ID3DBlob> m_wireframeVsByteCode;
+	ComPtr<ID3DBlob> m_wireframePsByteCode;
+	ComPtr<ID3D12RootSignature> m_wireframeRootSignature;
+	ComPtr<ID3D12PipelineState> m_wireframePso;
 };
 
 #endif // RENDERING_SYSTEM_HPP

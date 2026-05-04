@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Файлы заголовков\DirectX">
+      <UniqueIdentifier>{150d7dbb-ce66-418a-a6df-94fcadde36b8}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\GBuffer.cpp">
@@ -44,6 +47,9 @@
     <None Include="shader\DeferredLighting.hlsl">
       <Filter>Файлы ресурсов</Filter>
     </None>
+    <None Include="shader\Wireframe.hlsl">
+      <Filter>Файлы ресурсов</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Framework.hpp">
@@ -72,6 +78,42 @@
     </ClInclude>
     <ClInclude Include="include\Dx12Common.hpp">
       <Filter>Файлы заголовков</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3d12.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_barriers.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_check_feature_support.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_core.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_default.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_pipeline_state_stream.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_property_format_table.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_render_pass.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_resource_helpers.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_root_signature.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\directx\d3dx12_state_object.h">
+      <Filter>Файлы заголовков\DirectX</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

@@ -141,9 +141,6 @@ VSOut VSFullscreen(uint id : SV_VertexID)
 float4 PSLighting(VSOut pin) : SV_Target
 {
     float depth = gDepth.Sample(gSamPoint, pin.UV).r;
-    
-    if (depth >= 1.0f)
-        discard;
 
     float3 worldPos = WorldPosFromDepth(pin.UV, depth);
     float3 albedo = gAlbedo.Sample(gSamPoint, pin.UV).rgb;

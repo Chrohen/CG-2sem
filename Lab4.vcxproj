@@ -38,6 +38,18 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\directx\d3d12.h" />
+    <ClInclude Include="include\directx\d3dx12.h" />
+    <ClInclude Include="include\directx\d3dx12_barriers.h" />
+    <ClInclude Include="include\directx\d3dx12_check_feature_support.h" />
+    <ClInclude Include="include\directx\d3dx12_core.h" />
+    <ClInclude Include="include\directx\d3dx12_default.h" />
+    <ClInclude Include="include\directx\d3dx12_pipeline_state_stream.h" />
+    <ClInclude Include="include\directx\d3dx12_property_format_table.h" />
+    <ClInclude Include="include\directx\d3dx12_render_pass.h" />
+    <ClInclude Include="include\directx\d3dx12_resource_helpers.h" />
+    <ClInclude Include="include\directx\d3dx12_root_signature.h" />
+    <ClInclude Include="include\directx\d3dx12_state_object.h" />
     <ClInclude Include="include\Dx12Common.hpp" />
     <ClInclude Include="include\Framework.hpp" />
     <ClInclude Include="include\GBuffer.hpp" />
@@ -47,6 +59,11 @@
     <ClInclude Include="include\tiny_obj_loader.h" />
     <ClInclude Include="include\UploadBuffer.hpp" />
     <ClInclude Include="include\Window.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shader\Wireframe.hlsl">
+      <FileType>Document</FileType>
+    </None>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
