@@ -1,0 +1,4 @@
+newmtl Material_0
+map_Kd textures/StoneFloor_baseColor.png
+map_bump textures/StoneFloor_height.png
+norm textures/StoneFloor_normal.png

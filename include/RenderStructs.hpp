@@ -39,6 +39,11 @@ struct alignas(16) PassConstants {
 
 	float SpecPower = 32.0f;
 	DirectX::XMFLOAT3 _pad2 = { 0.0f, 0.0f, 0.0f };
+
+	float MinTessDistance = 5.0f;
+	float MaxTessDistance = 30.0f;
+	float MinTessFactor = 8.0f;
+	float MaxTessFactor = 1.0f;
 };
 
 struct alignas(16) MaterialConstants {
@@ -48,8 +53,14 @@ struct alignas(16) MaterialConstants {
 	DirectX::XMFLOAT2 UVOffset = { 0,0 };
 
 	DirectX::XMFLOAT2 UVSpeed = { 0,0 };
-	int DiffuseTexIndex = 0;
-	float _pad = 0.0f;
+	int  DiffuseTexIndex = 0;
+	float _pad0 = 0.0f;
+
+	int   DisplacementTexIndex = -1;
+	float DisplacementScale = 0.0f;
+	float DisplacementBias = 0.0f;
+
+	int   NormalTexIndex = -1;
 };
 
 
@@ -108,7 +119,8 @@ struct alignas(16) LightingConstants
 
 static_assert(sizeof(ObjectConstants) % 16 == 0, "ObjectConstants must be 16-byte aligned sized.");
 static_assert(sizeof(PassConstants) % 16 == 0, "PassConstants must be 16-byte aligned sized.");
-static_assert(sizeof(MaterialConstants) % 16 == 0, "MaterialConstants must be 16-byte aligned sized.");
+static_assert(sizeof(MaterialConstants) == 64, "MaterialConstants size must be 64 bytes (match HLSL cbuffer)");
+static_assert(alignof(MaterialConstants) == 16, "MaterialConstants must be 16-byte aligned");
 static_assert(sizeof(LightingConstants) % 16 == 0, "LightingConstants must be 16-byte aligned sized.");
 
 #endif // RENDER_STRUCTS_HPP

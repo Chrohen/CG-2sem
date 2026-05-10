@@ -145,6 +145,9 @@ LRESULT Framework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			m_wireframeMode = !m_wireframeMode;
 			return 0;
 		}
+		if (wParam == 'T') {
+			m_tessellationEnabled = !m_tessellationEnabled;
+		}
 		m_keyDown[static_cast<uint8_t>(wParam)] = true;
 		return 0;
 	case WM_KEYUP: case WM_SYSKEYUP:
@@ -186,17 +189,14 @@ void Framework::OnResize()
 	ThrowIfFailed(m_directCmdListAlloc->Reset());
 	ThrowIfFailed(m_commandList->Reset(m_directCmdListAlloc.Get(), nullptr));
 
-	// Освобождаем старые ресурсы
 	for (UINT i = 0; i < SwapChainBufferCount; ++i)
 		m_swapChainBuffer[i].Reset();
 	m_depthStencilBuffer.Reset();
 
-	// Изменяем размер SwapChain
 	ThrowIfFailed(m_swapChain->ResizeBuffers(
 		SwapChainBufferCount, m_clientWidth, m_clientHeight, m_backBufferFormat, 0));
 	m_currBackBuffer = static_cast<int>(m_swapChain->GetCurrentBackBufferIndex());
 
-	// RTV для back буферов
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
 	for (UINT i = 0; i < SwapChainBufferCount; ++i) {
 		ThrowIfFailed(m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_swapChainBuffer[i])));
@@ -233,7 +233,6 @@ void Framework::OnResize()
 		&optClear,
 		IID_PPV_ARGS(&m_depthStencilBuffer)));
 
-	// DSV для depth
 	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 	dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
 	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
@@ -245,18 +244,16 @@ void Framework::OnResize()
 
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-		heapDesc.NumDescriptors = 3;   // Albedo (t0), Normal (t1), Depth (t2)
+		heapDesc.NumDescriptors = 3;
 		heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 		heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 		ThrowIfFailed(m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_gbufferSrvHeap)));
 
-		// SRV для albedo и normal
 		m_gbuffer.CreateSrvDescriptors(
 			m_device.Get(),
 			m_gbufferSrvHeap->GetCPUDescriptorHandleForHeapStart(),
 			m_cbvSrvUavDescriptorSize);
 
-		// SRV для depth
 		D3D12_CPU_DESCRIPTOR_HANDLE depthSrvHandle = m_gbufferSrvHeap->GetCPUDescriptorHandleForHeapStart();
 		depthSrvHandle.ptr += 2 * m_cbvSrvUavDescriptorSize;
 
@@ -269,7 +266,6 @@ void Framework::OnResize()
 		m_device->CreateShaderResourceView(m_depthStencilBuffer.Get(), &depthSrvDesc, depthSrvHandle);
 	}
 
-	// Устанавливаем viewport и scissor rect
 	m_screenViewport = { 0.f, 0.f,
 		static_cast<float>(m_clientWidth), static_cast<float>(m_clientHeight),
 		0.f, 1.f };
@@ -324,11 +320,22 @@ void Framework::Update(const double& dt)
 	XMMATRIX proj = XMMatrixPerspectiveFovLH(0.25f * XM_PI, aspect, 0.1f, 1000.0f);
 	XMMATRIX viewProj = view * proj;
 
-	PassConstants pass{};
+	PassConstants pass;
 	XMStoreFloat4x4(&pass.ViewProj, XMMatrixTranspose(viewProj));
 	XMStoreFloat3(&pass.EyePosW, pos);
 	pass.LightDirW = { 0.577f, -0.3f, 0.577f };
 	pass.Time = static_cast<float>(m_timer.TotalTime());
+
+	pass.Ambient = { 0.2f, 0.2f, 0.2f, 1.0f };
+	pass.Diffuse = { 1.0f, 1.0f, 1.0f, 1.0f };
+	pass.Specular = { 0.3f, 0.3f, 0.3f, 0.3f };
+	pass.SpecPower = 8.0f;
+
+	pass.MinTessDistance = 1.0f;  
+	pass.MaxTessDistance = 5.0f;
+	pass.MinTessFactor = 0.001f;
+	pass.MaxTessFactor = 8.0f;
+
 	m_passCB->CopyData(0, pass);
 
 	LightingConstants lc{};
@@ -358,6 +365,7 @@ void Framework::Update(const double& dt)
 	lc.DirLights[0].Intensity = 1.0f;
 
 	lc.NumPointLights = (int)m_fallingLights.size();
+
 	for (size_t i = 0; i < m_fallingLights.size(); ++i)
 	{
 		lc.PointLights[i].Position = m_fallingLights[i].position;
@@ -398,7 +406,7 @@ void Framework::Draw()
 		auto dsv = DepthStencilView();
 		m_commandList->OMSetRenderTargets(1, &rtv, TRUE, &dsv);
 		m_commandList->ClearRenderTargetView(rtv, Colors::Black, 0, nullptr);
-		m_commandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		m_commandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
 		m_commandList->SetPipelineState(m_renderingSystem.WireframePSO());
 		m_commandList->SetGraphicsRootSignature(m_renderingSystem.WireframeRootSignature());
@@ -407,6 +415,7 @@ void Framework::Draw()
 		m_commandList->SetGraphicsRootConstantBufferView(1, m_passCB->Resource()->GetGPUVirtualAddress());
 
 		m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
 		if (m_modelVB && m_modelVertexCount > 0)
 		{
 			m_commandList->IASetVertexBuffers(0, 1, &m_modelVBV);
@@ -445,8 +454,18 @@ void Framework::Draw()
 
 	m_gbuffer.BindAsRenderTargets(m_commandList.Get(), dsv);
 
-	m_commandList->SetPipelineState(m_renderingSystem.GeometryPSO());
-	m_commandList->SetGraphicsRootSignature(m_renderingSystem.GeometryRootSignature());
+	if (m_tessellationEnabled)
+	{
+		m_commandList->SetPipelineState(m_renderingSystem.TessellationPSO());
+		m_commandList->SetGraphicsRootSignature(m_renderingSystem.TessellationRootSignature());
+		m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+	}
+	else
+	{
+		m_commandList->SetPipelineState(m_renderingSystem.GeometryPSO());
+		m_commandList->SetGraphicsRootSignature(m_renderingSystem.GeometryRootSignature());
+		m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	}
 
 	if (m_srvHeap) {
 		ID3D12DescriptorHeap* heaps[] = { m_srvHeap.Get() };
@@ -459,8 +478,6 @@ void Framework::Draw()
 		0, m_objectCB->Resource()->GetGPUVirtualAddress());
 	m_commandList->SetGraphicsRootConstantBufferView(
 		1, m_passCB->Resource()->GetGPUVirtualAddress());
-
-	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	if (m_modelVB && m_modelVertexCount > 0)
 	{
@@ -484,6 +501,7 @@ void Framework::Draw()
 				2, m_materialCBs[0]->Resource()->GetGPUVirtualAddress());
 		m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
 	}
+
 	m_gbuffer.TransitionToShaderResources(m_commandList.Get());
 
 	D3D12_RESOURCE_BARRIER toRT = {};
@@ -838,7 +856,7 @@ void Framework::BuildObjVB_Upload()
 {
 	using namespace DirectX;
 
-	const std::wstring objPathW = L"assets\\sponza.obj";
+	const std::wstring objPathW = L"assets\\sphere\\plane.obj";
 
 	auto WideToUtf8 = [](const std::wstring& w) -> std::string {
 		if (w.empty()) return {};
@@ -891,6 +909,28 @@ void Framework::BuildObjVB_Upload()
 		}
 	}
 
+	std::unordered_map<std::string, int> bumpTexNameToIndex;
+	std::vector<std::wstring> bumpTexPaths;
+	const UINT diffuseCount = (UINT)texPaths.size();
+
+	for (size_t mi = 0; mi < materials.size(); ++mi) {
+		const std::string& bumpMap = materials[mi].bump_texname;
+		if (bumpMap.empty()) continue;
+		std::string normName = bumpMap;
+		for (char& c : normName) if (c == '/') c = '\\';
+		auto it = bumpTexNameToIndex.find(normName);
+		if (it != bumpTexNameToIndex.end()) {
+			continue;
+		}
+		int idx = (int)bumpTexPaths.size();
+		bumpTexNameToIndex[normName] = idx;
+		std::string fullPath = baseDir + normName;
+		int wsz = MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, nullptr, 0);
+		std::wstring wpath(wsz > 0 ? wsz - 1 : 0, L'\0');
+		MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, wpath.data(), wsz);
+		bumpTexPaths.push_back(wpath);
+	}
+
 	ThrowIfFailed(m_directCmdListAlloc->Reset());
 	ThrowIfFailed(m_commandList->Reset(m_directCmdListAlloc.Get(), nullptr));
 
@@ -929,11 +969,23 @@ void Framework::BuildObjVB_Upload()
 		m_commandList->ResourceBarrier(1, &b);
 	}
 
-	BuildSrvHeap(texCount);
+	UINT oldTexCount = (UINT)m_textures.size();
+	m_textures.resize(oldTexCount + bumpTexPaths.size());
+	m_textureUploads.resize(m_textures.size());
+	for (UINT i = 0; i < bumpTexPaths.size(); ++i)
+		m_textures[oldTexCount + i] = LoadTextureFromFile(bumpTexPaths[i], m_textureUploads[oldTexCount + i]);
+
+	BuildSrvHeap((UINT)m_textures.size());
 
 	if (materials.empty()) {
 		m_materialCBs.push_back(std::make_unique<UploadBuffer<MaterialConstants>>(m_device.Get(), 1, true));
-		MaterialConstants mc{}; mc.DiffuseAlbedo = { 1,1,1,1 }; mc.UVScale = { 1,1 };
+		MaterialConstants mc{};
+		mc.DiffuseAlbedo = { 1, 1, 1, 1 };
+		mc.UVScale = { 1, 1 };
+		mc.DiffuseTexIndex = 0;
+		mc.DisplacementTexIndex = -1;
+		mc.DisplacementScale = 0.0f;
+		mc.DisplacementBias = 0.0f;
 		m_materialCBs.back()->CopyData(0, mc);
 	}
 	else {
@@ -943,12 +995,32 @@ void Framework::BuildObjVB_Upload()
 			mc.DiffuseAlbedo = {
 				materials[mi].diffuse[0], materials[mi].diffuse[1],
 				materials[mi].diffuse[2], 1.0f };
-			mc.UVScale = { 1,1 }; mc.UVOffset = { 0,0 }; mc.UVSpeed = { 0,0 };
+			mc.UVScale = { 1,1 };
+			mc.UVOffset = { 0,0 };
+			mc.UVSpeed = { 0,0 };
 			mc.DiffuseTexIndex = (m_matTexIndex[mi] >= 0) ? m_matTexIndex[mi] : 0;
-			std::string oss;
-			oss = materials[mi].name + "\n";
 
-			OutputDebugStringA(oss.c_str());
+			const std::string& bumpMap = materials[mi].bump_texname;
+			if (!bumpMap.empty()) {
+				std::string normName = bumpMap;
+				for (char& c : normName) if (c == '/') c = '\\';
+				auto it = bumpTexNameToIndex.find(normName);
+				if (it != bumpTexNameToIndex.end()) {
+					mc.DisplacementTexIndex = diffuseCount + it->second;
+					mc.DisplacementScale = 0.05f;
+					mc.DisplacementBias = 0.0f;
+				}
+				else {
+					mc.DisplacementTexIndex = -1;
+					mc.DisplacementScale = 0.0f;
+					mc.DisplacementBias = 0.0f;
+				}
+			}
+			else {
+				mc.DisplacementTexIndex = -1;
+				mc.DisplacementScale = 0.0f;
+				mc.DisplacementBias = 0.0f;
+			}
 
 			if (materials[mi].name == "fabric_a" ||
 				materials[mi].name == "fabric_b" ||
@@ -958,21 +1030,63 @@ void Framework::BuildObjVB_Upload()
 				materials[mi].name == "fabric_f" ||
 				materials[mi].name == "fabric_g")
 			{
-				mc.UVSpeed = { 0.05f,0.f };
+				mc.UVSpeed = { 0.05f, 0.f };
 			}
 
 			if (materials[mi].name == "bricks") {
-				mc.UVScale = { 0.2f,0.2f };
+				mc.UVScale = { 0.2f, 0.2f };
 			}
+
+			std::unordered_map<std::string, int> normalTexNameToIndex;
+			std::vector<std::wstring> normalTexPaths;
+			const UINT bumpOffset = (UINT)m_textures.size();
+
+			for (size_t mi = 0; mi < materials.size(); ++mi) {
+				const std::string& normMap = materials[mi].normal_texname;
+				if (normMap.empty()) continue;
+				std::string normName = normMap;
+				for (char& c : normName) if (c == '/') c = '\\';
+				auto it = normalTexNameToIndex.find(normName);
+				if (it != normalTexNameToIndex.end()) continue;
+				int idx = (int)normalTexPaths.size();
+				normalTexNameToIndex[normName] = idx;
+				std::string fullPath = baseDir + normName;
+				int wsz = MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, nullptr, 0);
+				std::wstring wpath(wsz > 0 ? wsz - 1 : 0, L'\0');
+				MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, wpath.data(), wsz);
+				normalTexPaths.push_back(wpath);
+			}
+
+			UINT oldTexCount3 = (UINT)m_textures.size();
+			m_textures.resize(oldTexCount3 + normalTexPaths.size());
+			m_textureUploads.resize(m_textures.size());
+			for (UINT i = 0; i < normalTexPaths.size(); ++i)
+				m_textures[oldTexCount3 + i] = LoadTextureFromFile(normalTexPaths[i], m_textureUploads[oldTexCount3 + i]);
+			
+			const std::string& normMap = materials[mi].normal_texname;
+			if (!normMap.empty()) {
+				std::string normName = normMap;
+				for (char& c : normName) if (c == '/') c = '\\';
+				auto it = normalTexNameToIndex.find(normName);
+				if (it != normalTexNameToIndex.end())
+					mc.NormalTexIndex = diffuseCount + bumpTexPaths.size() + it->second;
+				else
+					mc.NormalTexIndex = -1;
+			}
+			else {
+				mc.NormalTexIndex = -1;
+			}
+
+			BuildSrvHeap((UINT)m_textures.size());
 
 			m_materialCBs.back()->CopyData(0, mc);
 		}
 	}
 
 	const bool hasNormals = !attrib.normals.empty();
-	auto ReadPos = [&](int v) -> XMFLOAT3 { return { attrib.vertices[3 * v],attrib.vertices[3 * v + 1],attrib.vertices[3 * v + 2] }; };
+	auto ReadPos = [&](int v) -> XMFLOAT3 { return { attrib.vertices[3 * v], attrib.vertices[3 * v + 1], attrib.vertices[3 * v + 2] }; };
 	auto ReadNrm = [&](int n) -> XMFLOAT3 {
-		if (hasNormals && n >= 0) return { attrib.normals[3 * n],attrib.normals[3 * n + 1],attrib.normals[3 * n + 2] };
+		if (hasNormals && n >= 0) return { attrib.normals[3 * n], attrib.normals[3 * n + 1], attrib.normals[3 * n + 2] };
 		return { 0,1,0 };
 		};
 	auto ReadTex = [&](int t) -> XMFLOAT2 {
@@ -1007,9 +1121,9 @@ void Framework::BuildObjVB_Upload()
 				};
 			Exp(p0); Exp(p1); Exp(p2);
 			FaceVerts fv3;
-			fv3.v[0] = { p0,n0,ReadTex(i0.texcoord_index),{1,1,1,1} };
-			fv3.v[1] = { p1,n1,ReadTex(i1.texcoord_index),{1,1,1,1} };
-			fv3.v[2] = { p2,n2,ReadTex(i2.texcoord_index),{1,1,1,1} };
+			fv3.v[0] = { p0, n0, ReadTex(i0.texcoord_index), {1,1,1,1} };
+			fv3.v[1] = { p1, n1, ReadTex(i1.texcoord_index), {1,1,1,1} };
+			fv3.v[2] = { p2, n2, ReadTex(i2.texcoord_index), {1,1,1,1} };
 			facesByMat[matId].push_back(fv3);
 			off += 3;
 		}
@@ -1020,11 +1134,11 @@ void Framework::BuildObjVB_Upload()
 	for (auto& kv : facesByMat) {
 		UINT start = (UINT)vertices.size();
 		for (auto& f : kv.second) { vertices.push_back(f.v[0]); vertices.push_back(f.v[1]); vertices.push_back(f.v[2]); }
-		m_drawRanges.push_back({ start,(UINT)(kv.second.size() * 3),kv.first });
+		m_drawRanges.push_back({ start, (UINT)(kv.second.size() * 3), kv.first });
 	}
 	if (vertices.empty()) throw std::runtime_error("OBJ loaded but produced 0 vertices.");
 
-	m_modelCenter = { 0.5f * (minP.x + maxP.x),0.5f * (minP.y + maxP.y),0.5f * (minP.z + maxP.z) };
+	m_modelCenter = { 0.5f * (minP.x + maxP.x), 0.5f * (minP.y + maxP.y), 0.5f * (minP.z + maxP.z) };
 	float dx = maxP.x - minP.x, dy = maxP.y - minP.y, dz = maxP.z - minP.z;
 	float maxDim = dx > dy ? (dx > dz ? dx : dz) : (dy > dz ? dy : dz);
 	m_modelScale = (maxDim > 1e-6f) ? (2.0f / maxDim) : 1.0f;

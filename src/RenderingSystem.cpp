@@ -47,7 +47,7 @@ namespace {
 
 void RenderingSystem::BuildShaders()
 {
-	m_geometryVsByteCode = CompileShader(L"shader\\DeferredGeometry.hlsl", nullptr, "VS", "vs_5_1");
+	m_geometryVsByteCode = CompileShader(L"shader\\DeferredGeometry.hlsl", nullptr, "VS_def", "vs_5_1");
 	m_geometryPsByteCode = CompileShader(L"shader\\DeferredGeometry.hlsl", nullptr, "PS", "ps_5_1");
 
 	m_lightingVsByteCode = CompileShader(L"shader\\DeferredLighting.hlsl", nullptr, "VSFullscreen", "vs_5_1");
@@ -55,6 +55,10 @@ void RenderingSystem::BuildShaders()
 
 	m_wireframeVsByteCode = CompileShader(L"shader\\Wireframe.hlsl", nullptr, "VS", "vs_5_1");
 	m_wireframePsByteCode = CompileShader(L"shader\\Wireframe.hlsl", nullptr, "PS", "ps_5_1");
+
+	m_tessellationVsByteCode = CompileShader(L"shader\\DeferredGeometry.hlsl", nullptr, "VS", "vs_5_1");
+	m_tessellationHsByteCode = CompileShader(L"shader\\DeferredGeometry.hlsl", nullptr, "HSMain", "hs_5_1");
+	m_tessellationDsByteCode = CompileShader(L"shader\\DeferredGeometry.hlsl", nullptr, "DSMain", "ds_5_1");
 }
 
 void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
@@ -184,6 +188,64 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
 		m_wireframeRootSignature = CreateRootSignature(device, desc);
+	}
+
+	{
+		const UINT kTessTextureCount = 128;
+
+		D3D12_DESCRIPTOR_RANGE srvRange = {};
+		srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srvRange.NumDescriptors = kTessTextureCount;
+		srvRange.BaseShaderRegister = 0;
+		srvRange.RegisterSpace = 0;
+		srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+		D3D12_ROOT_PARAMETER params[4] = {};
+
+		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[0].Descriptor.ShaderRegister = 0;
+		params[0].Descriptor.RegisterSpace = 0;
+		params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[1].Descriptor.ShaderRegister = 1;
+		params[1].Descriptor.RegisterSpace = 0;
+		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[2].Descriptor.ShaderRegister = 2;
+		params[2].Descriptor.RegisterSpace = 0;
+		params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[3].DescriptorTable.NumDescriptorRanges = 1;
+		params[3].DescriptorTable.pDescriptorRanges = &srvRange;
+		params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		D3D12_STATIC_SAMPLER_DESC samp = {};
+		samp.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+		samp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samp.MipLODBias = 0.0f;
+		samp.MaxAnisotropy = 1;
+		samp.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		samp.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+		samp.MinLOD = 0.0f;
+		samp.MaxLOD = D3D12_FLOAT32_MAX;
+		samp.ShaderRegister = 0;
+		samp.RegisterSpace = 0;
+		samp.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		D3D12_ROOT_SIGNATURE_DESC desc = {};
+		desc.NumParameters = _countof(params);
+		desc.pParameters = params;
+		desc.NumStaticSamplers = 1;
+		desc.pStaticSamplers = &samp;
+
+		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+		m_tessellationRootSignature = CreateRootSignature(device, desc);
 	}
 }
 
@@ -341,5 +403,50 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.SampleDesc.Count = 1;
 
 		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_wireframePso)));
+	}
+
+	{
+		D3D12_INPUT_ELEMENT_DESC inputLayout[] =
+		{
+			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+			 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12,
+			 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24,
+			 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32,
+			 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		};
+
+		D3D12_BLEND_DESC blendDesc = {};
+		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+		blendDesc.RenderTarget[0].BlendEnable = FALSE;
+
+		D3D12_DEPTH_STENCIL_DESC dsDesc = {};
+		dsDesc.DepthEnable = TRUE;
+		dsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+		dsDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+		dsDesc.StencilEnable = FALSE;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+		psoDesc.InputLayout = { inputLayout, _countof(inputLayout) };
+		psoDesc.pRootSignature = m_tessellationRootSignature.Get();
+		psoDesc.VS = { m_tessellationVsByteCode->GetBufferPointer(), m_tessellationVsByteCode->GetBufferSize() };
+		psoDesc.HS = { m_tessellationHsByteCode->GetBufferPointer(), m_tessellationHsByteCode->GetBufferSize() };
+		psoDesc.DS = { m_tessellationDsByteCode->GetBufferPointer(), m_tessellationDsByteCode->GetBufferSize() };
+		psoDesc.PS = { m_geometryPsByteCode->GetBufferPointer(), m_geometryPsByteCode->GetBufferSize() };
+		psoDesc.RasterizerState = DefaultRasterizer(D3D12_CULL_MODE_BACK);
+		psoDesc.BlendState = blendDesc;
+		psoDesc.DepthStencilState = dsDesc;
+		psoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+		psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
+		psoDesc.NumRenderTargets = Gbuffer::kTargetCount;
+		psoDesc.RTVFormats[0] = Gbuffer::kAlbedoFormat;
+		psoDesc.RTVFormats[1] = Gbuffer::kNormalFormat;
+		psoDesc.DSVFormat = depthStencilFormat;
+		psoDesc.SampleDesc.Count = 1;
+		psoDesc.SampleDesc.Quality = 0;
+
+		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_tesselationPso)));
 	}
 }

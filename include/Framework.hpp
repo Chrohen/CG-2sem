@@ -151,6 +151,8 @@ private:
 	UINT                     m_boxIndexCount = 0;
 
 
+	bool m_tessellationEnabled = false;
+
 	// Camera & input
 	std::array<bool, 256> m_keyDown{};
 	float             m_cameraMoveSpeed = 3.0f;
