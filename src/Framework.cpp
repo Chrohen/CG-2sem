@@ -61,6 +61,7 @@ bool Framework::Init()
 	BuildBoxGeometry();
 	BuildObjVB_Upload();
 	InitFallingLights();
+	BuildWaterPlane();
 
 	OnResize();
 
@@ -332,7 +333,7 @@ void Framework::Update(const double& dt)
 	pass.SpecPower = 8.0f;
 
 	pass.MinTessDistance = 1.0f;  
-	pass.MaxTessDistance = 5.0f;
+	pass.MaxTessDistance = 20.0f;
 	pass.MinTessFactor = 0.001f;
 	pass.MaxTessFactor = 8.0f;
 
@@ -445,6 +446,7 @@ void Framework::Draw()
 		return;
 	}
 
+
 	m_gbuffer.TransitionToRenderTargets(m_commandList.Get());
 	m_gbuffer.Clear(m_commandList.Get());
 
@@ -500,6 +502,28 @@ void Framework::Draw()
 			m_commandList->SetGraphicsRootConstantBufferView(
 				2, m_materialCBs[0]->Resource()->GetGPUVirtualAddress());
 		m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
+	}
+
+	// Отрисовка воды
+	if (m_waterVB && m_waterVertexCount > 0)
+	{
+		m_commandList->SetPipelineState(m_renderingSystem.WaterPSO());
+		m_commandList->SetGraphicsRootSignature(m_renderingSystem.WaterRootSignature());
+		m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_4_CONTROL_POINT_PATCHLIST);
+		m_commandList->IASetVertexBuffers(0, 1, &m_waterVBV);
+
+		m_commandList->SetGraphicsRootConstantBufferView(0, m_waterObjectCB->Resource()->GetGPUVirtualAddress());
+		m_commandList->SetGraphicsRootConstantBufferView(1, m_passCB->Resource()->GetGPUVirtualAddress());
+		m_commandList->SetGraphicsRootConstantBufferView(2, m_waterMaterialCB->Resource()->GetGPUVirtualAddress());
+
+		if (m_srvHeap)
+		{
+			ID3D12DescriptorHeap* heaps[] = { m_srvHeap.Get() };
+			m_commandList->SetDescriptorHeaps(1, heaps);
+			m_commandList->SetGraphicsRootDescriptorTable(3, m_srvHeap->GetGPUDescriptorHandleForHeapStart());
+		}
+
+		m_commandList->DrawInstanced(4, 1, 0, 0);
 	}
 
 	m_gbuffer.TransitionToShaderResources(m_commandList.Get());
@@ -856,7 +880,7 @@ void Framework::BuildObjVB_Upload()
 {
 	using namespace DirectX;
 
-	const std::wstring objPathW = L"assets\\sphere\\plane.obj";
+	const std::wstring objPathW = L"assets\\sponza\\sponza.obj";
 
 	auto WideToUtf8 = [](const std::wstring& w) -> std::string {
 		if (w.empty()) return {};
@@ -1357,4 +1381,89 @@ void Framework::InitFallingLights()
 		m_fallingLights[i].velocityY = -2.0f - (rand() % 30) / 30.0f;
 		m_fallingLights[i].groundLevel = -2.0f;
 	}
+}
+
+void Framework::BuildWaterPlane()
+{
+	const float halfSize = 10.0f;
+	const float yLevel = 0.025f;
+
+	Vertex vertices[4] = {
+		{ {-halfSize, yLevel, -halfSize}, {0,1,0}, {0,0}, {1,1,1,1} },
+		{ { halfSize, yLevel, -halfSize}, {0,1,0}, {1,0}, {1,1,1,1} },
+		{ {-halfSize, yLevel,  halfSize}, {0,1,0}, {0,1}, {1,1,1,1} },
+		{ { halfSize, yLevel,  halfSize}, {0,1,0}, {1,1}, {1,1,1,1} }
+	};
+
+	m_waterVertexCount = 4;
+	const UINT vbByteSize = sizeof(vertices);
+
+	D3D12_HEAP_PROPERTIES uploadHeap = {};
+	uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+	D3D12_RESOURCE_DESC bufferDesc = {};
+	bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	bufferDesc.Width = vbByteSize;
+	bufferDesc.Height = 1;
+	bufferDesc.DepthOrArraySize = 1;
+	bufferDesc.MipLevels = 1;
+	bufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+	bufferDesc.SampleDesc.Count = 1;
+	bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+	ComPtr<ID3D12Resource> uploadBuffer;
+	ThrowIfFailed(m_device->CreateCommittedResource(
+		&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+		IID_PPV_ARGS(&uploadBuffer)));
+
+	void* mapped = nullptr;
+	ThrowIfFailed(uploadBuffer->Map(0, nullptr, &mapped));
+	memcpy(mapped, vertices, vbByteSize);
+	uploadBuffer->Unmap(0, nullptr);
+
+	D3D12_HEAP_PROPERTIES defaultHeap = {};
+	defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
+	ThrowIfFailed(m_device->CreateCommittedResource(
+		&defaultHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc,
+		D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+		IID_PPV_ARGS(&m_waterVB)));
+
+	ThrowIfFailed(m_directCmdListAlloc->Reset());
+	ThrowIfFailed(m_commandList->Reset(m_directCmdListAlloc.Get(), nullptr));
+	m_commandList->CopyBufferRegion(m_waterVB.Get(), 0, uploadBuffer.Get(), 0, vbByteSize);
+
+	D3D12_RESOURCE_BARRIER barrier = {};
+	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	barrier.Transition.pResource = m_waterVB.Get();
+	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+	barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	m_commandList->ResourceBarrier(1, &barrier);
+
+	ThrowIfFailed(m_commandList->Close());
+	ID3D12CommandList* cmdLists[] = { m_commandList.Get() };
+	m_commandQueue->ExecuteCommandLists(1, cmdLists);
+	FlushCommandQueue();
+
+	m_waterVBV.BufferLocation = m_waterVB->GetGPUVirtualAddress();
+	m_waterVBV.StrideInBytes = sizeof(Vertex);
+	m_waterVBV.SizeInBytes = vbByteSize;
+
+	m_waterObjectCB = std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true);
+	m_waterMaterialCB = std::make_unique<UploadBuffer<MaterialConstants>>(m_device.Get(), 1, true);
+
+	ObjectConstants waterObj;
+	XMStoreFloat4x4(&waterObj.World, XMMatrixIdentity());
+	XMStoreFloat4x4(&waterObj.WorldInvTranspose, XMMatrixIdentity());
+	m_waterObjectCB->CopyData(0, waterObj);
+
+	MaterialConstants waterMat;
+	waterMat.DiffuseAlbedo = { 0.2f, 0.5f, 0.8f, 0.9f }; 
+	waterMat.UVScale = { 4.0f, 4.0f };
+	waterMat.UVOffset = { 0.0f, 0.0f };
+	waterMat.UVSpeed = { 0.0f, 0.0f };
+	waterMat.DiffuseTexIndex = -1;
+	waterMat.DisplacementTexIndex = -1;
+	waterMat.NormalTexIndex = -1;
+	m_waterMaterialCB->CopyData(0, waterMat);
 }

@@ -23,6 +23,9 @@ public:
 
 	ID3D12RootSignature* TessellationRootSignature() const { return m_tessellationRootSignature.Get(); }
 	ID3D12PipelineState* TessellationPSO() const { return m_tesselationPso.Get(); }
+
+	ID3D12RootSignature* WaterRootSignature() const { return m_waterRootSignature.Get(); }
+	ID3D12PipelineState* WaterPSO() const { return m_waterPso.Get(); }
 private:
 	ComPtr<ID3DBlob> m_geometryVsByteCode;
 	ComPtr<ID3DBlob> m_geometryPsByteCode;
@@ -47,6 +50,14 @@ private:
 	ComPtr<ID3DBlob> m_tessellationHsByteCode;
 	ComPtr<ID3DBlob> m_tessellationDsByteCode;
 	ComPtr<ID3DBlob> m_tessellationPsByteCode;
+
+	ComPtr<ID3D12RootSignature> m_waterRootSignature;
+	ComPtr<ID3D12PipelineState> m_waterPso;
+
+	ComPtr<ID3DBlob> m_waterVsByteCode;
+	ComPtr<ID3DBlob> m_waterHsByteCode;
+	ComPtr<ID3DBlob> m_waterDsByteCode;
+	ComPtr<ID3DBlob> m_waterPsByteCode;
 };
 
 #endif // RENDERING_SYSTEM_HPP

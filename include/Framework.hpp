@@ -193,6 +193,14 @@ private:
 	bool m_wireframeMode = false;
 
 	std::vector<AnimatedPointLight> m_fallingLights;
+
+	// Вода
+	void BuildWaterPlane();
+	ComPtr<ID3D12Resource>   m_waterVB;
+	D3D12_VERTEX_BUFFER_VIEW m_waterVBV;
+	UINT                     m_waterVertexCount;
+	std::unique_ptr<UploadBuffer<ObjectConstants>>   m_waterObjectCB;
+	std::unique_ptr<UploadBuffer<MaterialConstants>> m_waterMaterialCB;
 };
 
 #endif // FRAMEWORK_HPP

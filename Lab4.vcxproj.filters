@@ -50,6 +50,9 @@
     <None Include="shader\Wireframe.hlsl">
       <Filter>Файлы ресурсов</Filter>
     </None>
+    <None Include="shader\WaterGeometry.hlsl">
+      <Filter>Файлы ресурсов</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Framework.hpp">
