@@ -216,7 +216,9 @@ struct PSOut
 PSOut PS(VertexOut pin)
 {
     float2 uv = pin.TexC * gUVScale + gUVOffset + gUVSpeed * sin(gTime);
-    float4 texSample = gTextures[gDiffuseTexIndex].Sample(gSamLinearWrap, uv);
+    float4 texSample = float4(1, 1, 1, 1);
+    if (gDiffuseTexIndex >= 0)
+        texSample = gTextures[gDiffuseTexIndex].Sample(gSamLinearWrap, uv);
 
     float3 albedo = pin.Color.rgb * gMatDiffuseAlbedo.rgb * texSample.rgb;
     float3 N = normalize(pin.NormalW);

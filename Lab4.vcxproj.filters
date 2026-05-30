@@ -36,6 +36,9 @@
     <ClCompile Include="src\Framework.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
+    <ClCompile Include="src\Octree.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="shader\Phong.hlsl">
@@ -117,6 +120,9 @@
     </ClInclude>
     <ClInclude Include="include\directx\d3dx12_state_object.h">
       <Filter>Файлы заголовков\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Octree.hpp">
+      <Filter>Файлы заголовков</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

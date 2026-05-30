@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClCompile Include="src\Framework.cpp" />
     <ClCompile Include="src\GBuffer.cpp" />
+    <ClCompile Include="src\Octree.cpp" />
     <ClCompile Include="src\RenderingSystem.cpp" />
     <ClCompile Include="src\Timer.cpp" />
     <ClCompile Include="src\Window.cpp" />
@@ -53,6 +54,7 @@
     <ClInclude Include="include\Dx12Common.hpp" />
     <ClInclude Include="include\Framework.hpp" />
     <ClInclude Include="include\GBuffer.hpp" />
+    <ClInclude Include="include\Octree.hpp" />
     <ClInclude Include="include\RenderingSystem.hpp" />
     <ClInclude Include="include\RenderStructs.hpp" />
     <ClInclude Include="include\Timer.hpp" />

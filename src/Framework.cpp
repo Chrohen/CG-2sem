@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <cmath>
 #include <string>
+#include <random>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
@@ -57,8 +58,10 @@ bool Framework::Init()
 	m_renderingSystem.BuildPSOs(m_device.Get(), m_backBufferFormat, m_depthStencilFormat);
 
 	BuildConstantBuffers();
-
 	BuildBoxGeometry();
+	GenerateCubes(5000);
+	BuildOctree();
+	m_octreeCB = std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true);
 	BuildObjVB_Upload();
 	InitFallingLights();
 	BuildWaterPlane();
@@ -148,6 +151,18 @@ LRESULT Framework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		}
 		if (wParam == 'T') {
 			m_tessellationEnabled = !m_tessellationEnabled;
+		}
+		if (wParam == 'F') {
+			m_frustumCullingEnabled = !m_frustumCullingEnabled;
+			return 0;
+		}
+		if (wParam == 'G') {
+			m_octreeCullingEnabled = !m_octreeCullingEnabled;
+			return 0;
+		}
+		if (wParam == 'H') {
+			m_showOctree = !m_showOctree;
+			return 0;
 		}
 		m_keyDown[static_cast<uint8_t>(wParam)] = true;
 		return 0;
@@ -280,6 +295,27 @@ void Framework::OnResize()
 
 void Framework::Update(const double& dt)
 {
+	static double timeElapsed = 0.0;
+	static int frameCount = 0;
+	frameCount++;
+	timeElapsed += dt;
+
+	if (timeElapsed >= 0.5) {
+		m_currentFPS = static_cast<float>(frameCount) / static_cast<float>(timeElapsed);
+		frameCount = 0;
+		timeElapsed = 0.0;
+
+		std::wostringstream woss;
+		woss << m_title << L" - FPS: " << static_cast<int>(m_currentFPS);
+		if (m_octreeCullingEnabled)
+			woss << L" | Octree + Frustum | Visible: " << m_visibleCubeCount << L" / " << m_cubeInstances.size();
+		else if (m_frustumCullingEnabled)
+			woss << L" | Frustum | Visible: " << m_visibleCubeCount << L" / " << m_cubeInstances.size();
+		else
+			woss << L" | Cubes: " << m_cubeInstances.size();
+		SetWindowText(MainWnd(), woss.str().c_str());
+	}
+
 	ObjectConstants obj = {};
 	XMMATRIX world =
 		XMMatrixTranslation(-m_modelCenter.x, -m_modelCenter.y, -m_modelCenter.z) *
@@ -503,6 +539,9 @@ void Framework::Draw()
 				2, m_materialCBs[0]->Resource()->GetGPUVirtualAddress());
 		m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
 	}
+
+	DrawCubes();
+	DrawOctree();
 
 	// Отрисовка воды
 	if (m_waterVB && m_waterVertexCount > 0)
@@ -1466,4 +1505,259 @@ void Framework::BuildWaterPlane()
 	waterMat.DisplacementTexIndex = -1;
 	waterMat.NormalTexIndex = -1;
 	m_waterMaterialCB->CopyData(0, waterMat);
+}
+
+void Framework::GenerateCubes(int count)
+{
+	m_cubeInstances.clear();
+	m_cubeObjectCBs.clear();
+	m_cubeMaterialCBs.clear();
+
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_real_distribution<float> posDist(-10.0f, 10.0f);
+	std::uniform_real_distribution<float> yPosDist(0.0f, 15.0f);
+	std::uniform_real_distribution<float> scaleDist(0.2f, 0.4f);
+	std::uniform_real_distribution<float> colorDist(0.5f, 0.5f);
+
+	for (int i = 0; i < count; ++i) {
+		CubeInstance cube;
+		cube.position.x = posDist(gen);
+		cube.position.z = posDist(gen);
+		cube.position.y = yPosDist(gen);
+		cube.scale.x = scaleDist(gen);
+		cube.scale.y = scaleDist(gen);
+		cube.scale.z = scaleDist(gen);
+		cube.color = { 0.5f, 0.5f, 0.5f, 1.0f};
+		m_cubeInstances.push_back(cube);
+
+		auto objCB = std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true);
+		auto matCB = std::make_unique<UploadBuffer<MaterialConstants>>(m_device.Get(), 1, true);
+
+		XMMATRIX scaleMat = XMMatrixScaling(cube.scale.x, cube.scale.y, cube.scale.z);
+		XMMATRIX transMat = XMMatrixTranslation(cube.position.x, cube.position.y, cube.position.z);
+		XMMATRIX world = scaleMat * transMat;
+		XMMATRIX worldInvTranspose = XMMatrixTranspose(XMMatrixInverse(nullptr, world));
+
+		ObjectConstants objData;
+		XMStoreFloat4x4(&objData.World, XMMatrixTranspose(world));
+		XMStoreFloat4x4(&objData.WorldInvTranspose, worldInvTranspose);
+		objCB->CopyData(0, objData);
+
+		MaterialConstants matData;
+		matData.DiffuseAlbedo = cube.color;
+		matData.UVScale = { 1.0f, 1.0f };
+		matData.UVOffset = { 0.0f, 0.0f };
+		matData.UVSpeed = { 0.0f, 0.0f };
+		matData.DiffuseTexIndex = -1;
+		matData.DisplacementTexIndex = -1;
+		matData.DisplacementScale = 0.0f;
+		matData.DisplacementBias = 0.0f;
+		matData.NormalTexIndex = -1;
+		matCB->CopyData(0, matData);
+
+		m_cubeObjectCBs.push_back(std::move(objCB));
+		m_cubeMaterialCBs.push_back(std::move(matCB));
+
+		AABB bounds;
+		bounds.center = cube.position;
+		bounds.halfExtents.x = cube.scale.x * 0.5f;
+		bounds.halfExtents.y = cube.scale.y * 0.5f;
+		bounds.halfExtents.z = cube.scale.z * 0.5f;
+		m_cubeAABBs.push_back(bounds);
+	}
+}
+
+void Framework::DrawCubes()
+{
+	if (!m_showCubes || m_cubeInstances.empty())
+		return;
+
+	std::vector<int> visibleIndices;
+
+	if (m_octreeCullingEnabled && m_octree) {
+		FrustumPlanes frustum = ComputeFrustumPlanes();
+		XMVECTOR planes[6];
+		for (int i = 0; i < 6; ++i) planes[i] = frustum.planes[i];
+		m_octree->QueryFrustum(planes, visibleIndices);
+	}
+	else if (m_frustumCullingEnabled) {
+		FrustumPlanes frustum = ComputeFrustumPlanes();
+		for (size_t i = 0; i < m_cubeInstances.size(); ++i) {
+			if (IsAABBInFrustum(m_cubeAABBs[i].center, m_cubeAABBs[i].halfExtents, frustum))
+				visibleIndices.push_back(static_cast<int>(i));
+		}
+	}
+	else {
+		visibleIndices.resize(m_cubeInstances.size());
+		for (size_t i = 0; i < m_cubeInstances.size(); ++i) visibleIndices[i] = static_cast<int>(i);
+	}
+
+	m_visibleCubeCount = static_cast<int>(visibleIndices.size());
+
+	m_commandList->SetPipelineState(m_renderingSystem.GeometryPSO());
+	m_commandList->SetGraphicsRootSignature(m_renderingSystem.GeometryRootSignature());
+	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_commandList->IASetVertexBuffers(0, 1, &m_boxVBView);
+	m_commandList->IASetIndexBuffer(&m_boxIBView);
+	m_commandList->SetGraphicsRootConstantBufferView(1, m_passCB->Resource()->GetGPUVirtualAddress());
+
+	if (m_srvHeap) {
+		ID3D12DescriptorHeap* heaps[] = { m_srvHeap.Get() };
+		m_commandList->SetDescriptorHeaps(1, heaps);
+		m_commandList->SetGraphicsRootDescriptorTable(3, m_srvHeap->GetGPUDescriptorHandleForHeapStart());
+	}
+
+	for (int idx : visibleIndices) {
+		m_commandList->SetGraphicsRootConstantBufferView(0, m_cubeObjectCBs[idx]->Resource()->GetGPUVirtualAddress());
+		m_commandList->SetGraphicsRootConstantBufferView(2, m_cubeMaterialCBs[idx]->Resource()->GetGPUVirtualAddress());
+		m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
+	}
+}
+
+Framework::FrustumPlanes Framework::ComputeFrustumPlanes() const
+{
+	FrustumPlanes frustum;
+
+	float aspect = (float)m_clientWidth / (float)m_clientHeight;
+	float fovY = 0.25f * XM_PI;
+	float nearZ = 0.1f;
+	float farZ = 1000.0f;
+
+	float tanHalfFovY = tanf(fovY * 0.5f);
+	float tanHalfFovX = tanHalfFovY * aspect;
+
+	XMFLOAT3 nearCorners[4] = {
+		{ -tanHalfFovX * nearZ,  tanHalfFovY * nearZ, nearZ },
+		{  tanHalfFovX * nearZ,  tanHalfFovY * nearZ, nearZ },
+		{  tanHalfFovX * nearZ, -tanHalfFovY * nearZ, nearZ },
+		{ -tanHalfFovX * nearZ, -tanHalfFovY * nearZ, nearZ }
+	};
+	XMFLOAT3 farCorners[4] = {
+		{ -tanHalfFovX * farZ,  tanHalfFovY * farZ, farZ },
+		{  tanHalfFovX * farZ,  tanHalfFovY * farZ, farZ },
+		{  tanHalfFovX * farZ, -tanHalfFovY * farZ, farZ },
+		{ -tanHalfFovX * farZ, -tanHalfFovY * farZ, farZ }
+	};
+
+	XMMATRIX view = XMMatrixLookAtLH(XMLoadFloat3(&m_camPos), XMLoadFloat3(&m_camTarget), XMLoadFloat3(&m_camUp));
+	XMMATRIX invView = XMMatrixInverse(nullptr, view);
+
+	XMFLOAT3 worldCorners[8];
+	for (int i = 0; i < 4; ++i) {
+		XMStoreFloat3(&worldCorners[i], XMVector3TransformCoord(XMLoadFloat3(&nearCorners[i]), invView));
+		XMStoreFloat3(&worldCorners[i + 4], XMVector3TransformCoord(XMLoadFloat3(&farCorners[i]), invView));
+	}
+
+	frustum.planes[0] = XMPlaneFromPoints(XMLoadFloat3(&worldCorners[0]), XMLoadFloat3(&worldCorners[3]), XMLoadFloat3(&worldCorners[4]));
+	frustum.planes[1] = XMPlaneFromPoints(XMLoadFloat3(&worldCorners[1]), XMLoadFloat3(&worldCorners[2]), XMLoadFloat3(&worldCorners[5]));
+	frustum.planes[2] = XMPlaneFromPoints(XMLoadFloat3(&worldCorners[3]), XMLoadFloat3(&worldCorners[2]), XMLoadFloat3(&worldCorners[7]));
+	frustum.planes[3] = XMPlaneFromPoints(XMLoadFloat3(&worldCorners[0]), XMLoadFloat3(&worldCorners[1]), XMLoadFloat3(&worldCorners[4]));
+	frustum.planes[4] = XMPlaneFromPoints(XMLoadFloat3(&worldCorners[0]), XMLoadFloat3(&worldCorners[1]), XMLoadFloat3(&worldCorners[2]));
+	frustum.planes[5] = XMPlaneFromPoints(XMLoadFloat3(&worldCorners[4]), XMLoadFloat3(&worldCorners[5]), XMLoadFloat3(&worldCorners[7]));
+
+	XMVECTOR eyePos = XMLoadFloat3(&m_camPos);
+	XMVECTOR lookDir = XMVector3Normalize(XMLoadFloat3(&m_camTarget) - eyePos);
+	XMVECTOR insidePoint = eyePos + lookDir * 5.0f;
+
+	for (int i = 0; i < 6; ++i) {
+		frustum.planes[i] = XMPlaneNormalize(frustum.planes[i]);
+		float dot = XMVectorGetX(XMPlaneDotCoord(frustum.planes[i], insidePoint));
+		if (dot < 0.0f) {
+			frustum.planes[i] = XMVectorNegate(frustum.planes[i]);
+		}
+	}
+
+	return frustum;
+}
+
+bool Framework::IsAABBInFrustum(const XMFLOAT3& center, const XMFLOAT3& halfExtents, const FrustumPlanes& frustum) const
+{
+	XMVECTOR c = XMLoadFloat3(&center);
+	XMVECTOR he = XMLoadFloat3(&halfExtents);
+
+	for (int i = 0; i < 6; ++i) {
+		XMVECTOR plane = frustum.planes[i];
+		float d = XMVectorGetX(XMPlaneDotCoord(plane, c));
+
+		XMVECTOR absN = XMVectorAbs(XMVector3Normalize(plane));
+		float r = XMVectorGetX(absN) * halfExtents.x +
+			XMVectorGetY(absN) * halfExtents.y +
+			XMVectorGetZ(absN) * halfExtents.z;
+
+		if (d + r < 0.0f)
+			return false;
+	}
+	return true;
+}
+
+void Framework::BuildOctree()
+{
+	AABB totalBounds;
+	if (!m_cubeAABBs.empty()) {
+		XMVECTOR minV = XMLoadFloat3(&m_cubeAABBs[0].center) - XMLoadFloat3(&m_cubeAABBs[0].halfExtents);
+		XMVECTOR maxV = XMLoadFloat3(&m_cubeAABBs[0].center) + XMLoadFloat3(&m_cubeAABBs[0].halfExtents);
+		for (size_t i = 1; i < m_cubeAABBs.size(); ++i) {
+			XMVECTOR c = XMLoadFloat3(&m_cubeAABBs[i].center);
+			XMVECTOR h = XMLoadFloat3(&m_cubeAABBs[i].halfExtents);
+			XMVECTOR minC = c - h;
+			XMVECTOR maxC = c + h;
+			minV = XMVectorMin(minV, minC);
+			maxV = XMVectorMax(maxV, maxC);
+		}
+		XMVECTOR center = (minV + maxV) * 0.5f;
+		XMVECTOR half = (maxV - minV) * 0.5f;
+		XMStoreFloat3(&totalBounds.center, center);
+		XMStoreFloat3(&totalBounds.halfExtents, half);
+
+		m_octree = std::make_unique<Octree>(totalBounds, 16, 32);
+		m_octree->Build(m_cubeAABBs);
+
+		OutputDebugStringA(("Total bounds center: " + std::to_string(totalBounds.center.x) + ", " + std::to_string(totalBounds.center.y) + ", " + std::to_string(totalBounds.center.z) + "\n").c_str());
+		OutputDebugStringA(("Total bounds half: " + std::to_string(totalBounds.halfExtents.x) + ", " + std::to_string(totalBounds.halfExtents.y) + ", " + std::to_string(totalBounds.halfExtents.z) + "\n").c_str());
+	}
+}
+
+void Framework::DrawOctree()
+{
+	if (!m_showOctree || !m_octree) return;
+
+	std::vector<AABB> leafBounds;
+	m_octree->GetAllLeafNodes(leafBounds);
+	if (leafBounds.empty()) return;
+
+	static std::vector<std::unique_ptr<UploadBuffer<ObjectConstants>>> leafBuffers;
+	static size_t lastLeafCount = 0;
+
+	if (leafBounds.size() != lastLeafCount) {
+		leafBuffers.clear();
+		leafBuffers.reserve(leafBounds.size());
+		for (size_t i = 0; i < leafBounds.size(); ++i) {
+			leafBuffers.push_back(std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true));
+		}
+		lastLeafCount = leafBounds.size();
+	}
+
+	m_commandList->SetPipelineState(m_renderingSystem.WireframePSO());
+	m_commandList->SetGraphicsRootSignature(m_renderingSystem.WireframeRootSignature());
+	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_commandList->IASetVertexBuffers(0, 1, &m_boxVBView);
+	m_commandList->IASetIndexBuffer(&m_boxIBView);
+	m_commandList->SetGraphicsRootConstantBufferView(1, m_passCB->Resource()->GetGPUVirtualAddress());
+
+	for (size_t i = 0; i < leafBounds.size(); ++i) {
+		const auto& aabb = leafBounds[i];
+
+		XMMATRIX scale = XMMatrixScaling(aabb.halfExtents.x, aabb.halfExtents.y, aabb.halfExtents.z);
+		XMMATRIX trans = XMMatrixTranslation(aabb.center.x, aabb.center.y, aabb.center.z);
+		XMMATRIX world = scale * trans;
+
+		ObjectConstants obj;
+		XMStoreFloat4x4(&obj.World, XMMatrixTranspose(world));
+		XMStoreFloat4x4(&obj.WorldInvTranspose, XMMatrixIdentity());
+
+		leafBuffers[i]->CopyData(0, obj);
+		m_commandList->SetGraphicsRootConstantBufferView(0, leafBuffers[i]->Resource()->GetGPUVirtualAddress());
+		m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
+	}
 }

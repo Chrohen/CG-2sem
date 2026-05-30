@@ -1,10 +1,3 @@
-// WaterGeometry.hlsl
-// Шейдер для водной поверхности с тесселяцией (quad-патчи)
-// Корректные нормали, волны, видимость сверху
-
-// ------------------------------------------------------------
-// Константные буферы
-// ------------------------------------------------------------
 cbuffer ObjectCB : register(b0)
 {
     float4x4 gWorld;
@@ -54,9 +47,6 @@ cbuffer MaterialCB : register(b2)
 Texture2D gTextures[64] : register(t0);
 SamplerState gSamLinearWrap : register(s0);
 
-// ------------------------------------------------------------
-// Входные / выходные структуры
-// ------------------------------------------------------------
 struct VertexIn
 {
     float3 PosL : POSITION;
@@ -98,9 +88,6 @@ struct VertexOut
     float3 BitangentW : TEXCOORD4;
 };
 
-// ------------------------------------------------------------
-// Вершинный шейдер
-// ------------------------------------------------------------
 HSInput VS(VertexIn vin)
 {
     HSInput vout;
@@ -112,9 +99,6 @@ HSInput VS(VertexIn vin)
     return vout;
 }
 
-// ------------------------------------------------------------
-// Халл-шейдер
-// ------------------------------------------------------------
 [domain("quad")]
 [partitioning("fractional_odd")]
 [outputtopology("triangle_cw")]
@@ -142,9 +126,6 @@ QuadPatchTess PatchConstant(InputPatch<HSInput, 4> patch, uint patchID : SV_Prim
     return tess;
 }
 
-// ------------------------------------------------------------
-// Функции волн
-// ------------------------------------------------------------
 float WaveHeight(float3 pos, float time)
 {
     float h = 0.0;
@@ -158,7 +139,6 @@ float WaveHeight(float3 pos, float time)
     return h;
 }
 
-// Вычисление нормали с правильным порядком cross
 float3 ComputeWaveNormal(float3 posW, float time, float eps)
 {
     float3 p = posW;
@@ -176,21 +156,16 @@ float3 ComputeWaveNormal(float3 posW, float time, float eps)
     float3 tangent = normalize(px_displaced - p_displaced);
     float3 bitangent = normalize(pz_displaced - p_displaced);
     
-    // Ключевое исправление: cross(bitangent, tangent) даёт нормаль вверх (0,1,0) для плоскости
     float3 normal = normalize(cross(bitangent, tangent));
     return normal;
 }
 
-// ------------------------------------------------------------
-// Домейн-шейдер
-// ------------------------------------------------------------
 [domain("quad")]
 VertexOut DSMain(QuadPatchTess tessFactors, float2 uv : SV_DomainLocation,
                  OutputPatch<DSInput, 4> patch)
 {
     VertexOut dout;
     
-    // Билинейная интерполяция
     float3 posW = lerp(lerp(patch[0].PosW, patch[1].PosW, uv.x),
                        lerp(patch[2].PosW, patch[3].PosW, uv.x), uv.y);
     float3 normalW = normalize(lerp(lerp(patch[0].NormalW, patch[1].NormalW, uv.x),
@@ -200,21 +175,17 @@ VertexOut DSMain(QuadPatchTess tessFactors, float2 uv : SV_DomainLocation,
     float4 color = lerp(lerp(patch[0].Color, patch[1].Color, uv.x),
                         lerp(patch[2].Color, patch[3].Color, uv.x), uv.y);
     
-    // Сохраняем исходную позицию (без смещения)
     float3 originalPos = posW;
     
-    // Применяем смещение по Y
     float height = WaveHeight(originalPos, gTime);
     posW.y = height;
     
-    // Вычисляем нормаль, используя исходную позицию
     const float eps = 0.01;
     normalW = ComputeWaveNormal(originalPos, gTime, eps);
     
-    // Проекция
     dout.PosH = mul(float4(posW, 1.0f), gViewProj);
     dout.PosW = posW;
-    dout.NormalW = normalW; // не инвертируем!
+    dout.NormalW = normalW;
     dout.TexC = texC;
     dout.Color = color;
     dout.TangentW = float3(1, 0, 0);
@@ -223,9 +194,6 @@ VertexOut DSMain(QuadPatchTess tessFactors, float2 uv : SV_DomainLocation,
     return dout;
 }
 
-// ------------------------------------------------------------
-// Пиксельный шейдер
-// ------------------------------------------------------------
 struct PSOut
 {
     float4 Albedo : SV_Target0;

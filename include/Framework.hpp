@@ -16,6 +16,7 @@
 #include <wincodec.h>
 #include <wrl.h>
 #include <vector>
+#include "Octree.hpp"
 #pragma comment(lib, "windowscodecs.lib")
 
 struct AnimatedPointLight {
@@ -25,6 +26,12 @@ struct AnimatedPointLight {
 	float intensity;
 	float velocityY;
 	float groundLevel;
+};
+
+struct CubeInstance {
+	DirectX::XMFLOAT3 position;
+	DirectX::XMFLOAT3 scale;
+	DirectX::XMFLOAT4 color;
 };
 
 class Framework : public IWindowMessageHandler {
@@ -201,6 +208,48 @@ private:
 	UINT                     m_waterVertexCount;
 	std::unique_ptr<UploadBuffer<ObjectConstants>>   m_waterObjectCB;
 	std::unique_ptr<UploadBuffer<MaterialConstants>> m_waterMaterialCB;
+
+
+	// Кубы
+	void GenerateCubes(int count);
+	void DrawCubes();
+
+	std::vector<CubeInstance> m_cubeInstances;
+	std::vector<std::unique_ptr<UploadBuffer<ObjectConstants>>> m_cubeObjectCBs;
+	std::vector<std::unique_ptr<UploadBuffer<MaterialConstants>>> m_cubeMaterialCBs;
+	bool m_showCubes = true;
+
+	// fps
+	double m_fpsUpdateTime = 0.0;
+	int    m_frameCount = 0;
+	float  m_currentFPS = 0.0f;
+
+	struct FrustumPlanes {
+		DirectX::XMVECTOR planes[6];
+	};
+
+	FrustumPlanes ComputeFrustumPlanes() const;
+	bool IsAABBInFrustum(const DirectX::XMFLOAT3& center, const DirectX::XMFLOAT3& halfExtents, const FrustumPlanes& frustum) const;
+
+	struct CubeBounds {
+		DirectX::XMFLOAT3 center;
+		DirectX::XMFLOAT3 halfExtents;
+	};
+	std::vector<CubeBounds> m_cubeBounds;
+
+	bool m_frustumCullingEnabled = false;
+	int  m_visibleCubeCount = 0;
+
+	std::unique_ptr<Octree> m_octree;
+	bool m_octreeCullingEnabled = false;
+	std::vector<AABB> m_cubeAABBs;
+
+	void BuildOctree();
+
+	bool m_showOctree = false;
+	std::unique_ptr<UploadBuffer<ObjectConstants>> m_octreeCB;
+	void DrawOctree();
+
 };
 
 #endif // FRAMEWORK_HPP
