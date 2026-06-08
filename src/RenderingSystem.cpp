@@ -64,6 +64,9 @@ void RenderingSystem::BuildShaders()
 	m_waterHsByteCode = CompileShader(L"shader\\WaterGeometry.hlsl", nullptr, "HSMain", "hs_5_1");
 	m_waterDsByteCode = CompileShader(L"shader\\WaterGeometry.hlsl", nullptr, "DSMain", "ds_5_1");
 	m_waterPsByteCode = CompileShader(L"shader\\WaterGeometry.hlsl", nullptr, "PS", "ps_5_1");
+
+	m_billboardVsByteCode = CompileShader(L"shader\\Billboard.hlsl", nullptr, "VS", "vs_5_1");
+	m_billboardPsByteCode = CompileShader(L"shader\\Billboard.hlsl", nullptr, "PS", "ps_5_1");
 }
 
 void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
@@ -306,6 +309,24 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
 		m_waterRootSignature = CreateRootSignature(device, desc);
+	}
+
+	{
+		D3D12_ROOT_PARAMETER params[2] = {};
+		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[0].Descriptor.ShaderRegister = 0;
+		params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[1].Descriptor.ShaderRegister = 1;
+		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+		D3D12_ROOT_SIGNATURE_DESC desc = {};
+		desc.NumParameters = _countof(params);
+		desc.pParameters = params;
+		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+		m_billboardRootSignature = CreateRootSignature(device, desc);
 	}
 }
 
@@ -567,5 +588,45 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.SampleDesc.Quality = 0;
 
 		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_waterPso)));
+	}
+
+	{
+		D3D12_BLEND_DESC blendDesc = {};
+		blendDesc.IndependentBlendEnable = FALSE;
+		for (UINT i = 0; i < Gbuffer::kTargetCount; ++i) {
+			D3D12_RENDER_TARGET_BLEND_DESC rt = {};
+			rt.BlendEnable = FALSE;
+			rt.LogicOpEnable = FALSE;
+			rt.SrcBlend = D3D12_BLEND_ONE;
+			rt.DestBlend = D3D12_BLEND_ZERO;
+			rt.BlendOp = D3D12_BLEND_OP_ADD;
+			rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+			blendDesc.RenderTarget[i] = rt;
+		}
+
+		D3D12_DEPTH_STENCIL_DESC dsDesc = {};
+		dsDesc.DepthEnable = TRUE;
+		dsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+		dsDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+		dsDesc.StencilEnable = FALSE;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+		psoDesc.InputLayout = { nullptr, 0 };
+		psoDesc.pRootSignature = m_billboardRootSignature.Get();
+		psoDesc.VS = { m_billboardVsByteCode->GetBufferPointer(), m_billboardVsByteCode->GetBufferSize() };
+		psoDesc.PS = { m_billboardPsByteCode->GetBufferPointer(), m_billboardPsByteCode->GetBufferSize() };
+		psoDesc.RasterizerState = DefaultRasterizer(D3D12_CULL_MODE_NONE);
+		psoDesc.BlendState = blendDesc;
+		psoDesc.DepthStencilState = dsDesc;
+		psoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+		psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		psoDesc.NumRenderTargets = Gbuffer::kTargetCount;
+		psoDesc.RTVFormats[0] = Gbuffer::kAlbedoFormat;
+		psoDesc.RTVFormats[1] = Gbuffer::kNormalFormat;
+		psoDesc.DSVFormat = depthStencilFormat;
+		psoDesc.SampleDesc.Count = 1;
+		psoDesc.SampleDesc.Quality = 0;
+
+		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_billboardPso)));
 	}
 }

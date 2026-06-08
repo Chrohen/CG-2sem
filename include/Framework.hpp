@@ -34,6 +34,12 @@ struct CubeInstance {
 	DirectX::XMFLOAT4 color;
 };
 
+struct BillboardInstance {
+	DirectX::XMFLOAT3 Position;
+	DirectX::XMFLOAT2 Size;      // ширина и высота билборда
+	DirectX::XMFLOAT4 Color;     // цвет или albedo
+};
+
 class Framework : public IWindowMessageHandler {
 public:
 	explicit Framework(int width, int height, const wchar_t* title);
@@ -250,6 +256,15 @@ private:
 	std::unique_ptr<UploadBuffer<ObjectConstants>> m_octreeCB;
 	void DrawOctree();
 
+	// Billboard
+
+	bool m_billboardEnabled = false;
+	float m_billboardDistance = 20.0f;
+	std::vector<BillboardInstance> m_billboardInstances;
+	std::vector<std::unique_ptr<UploadBuffer<BillboardConstants>>> m_billboardCBs;
+	size_t m_lastBillboardCount = 0;
+
+	void DrawBillboards();
 };
 
 #endif // FRAMEWORK_HPP

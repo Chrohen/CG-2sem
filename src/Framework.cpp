@@ -164,6 +164,10 @@ LRESULT Framework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			m_showOctree = !m_showOctree;
 			return 0;
 		}
+		if (wParam == 'B') {
+			m_billboardEnabled = !m_billboardEnabled;
+			return 0;
+		}
 		m_keyDown[static_cast<uint8_t>(wParam)] = true;
 		return 0;
 	case WM_KEYUP: case WM_SYSKEYUP:
@@ -542,6 +546,7 @@ void Framework::Draw()
 
 	DrawCubes();
 	DrawOctree();
+	DrawBillboards();
 
 	// Отрисовка воды
 	if (m_waterVB && m_waterVertexCount > 0)
@@ -1517,7 +1522,7 @@ void Framework::GenerateCubes(int count)
 	std::mt19937 gen(rd());
 	std::uniform_real_distribution<float> posDist(-10.0f, 10.0f);
 	std::uniform_real_distribution<float> yPosDist(0.0f, 15.0f);
-	std::uniform_real_distribution<float> scaleDist(0.2f, 0.4f);
+	std::uniform_real_distribution<float> scaleDist(0.3f, 0.3f);
 	std::uniform_real_distribution<float> colorDist(0.5f, 0.5f);
 
 	for (int i = 0; i < count; ++i) {
@@ -1594,6 +1599,7 @@ void Framework::DrawCubes()
 	}
 
 	m_visibleCubeCount = static_cast<int>(visibleIndices.size());
+	m_billboardInstances.clear();
 
 	m_commandList->SetPipelineState(m_renderingSystem.GeometryPSO());
 	m_commandList->SetGraphicsRootSignature(m_renderingSystem.GeometryRootSignature());
@@ -1609,9 +1615,24 @@ void Framework::DrawCubes()
 	}
 
 	for (int idx : visibleIndices) {
-		m_commandList->SetGraphicsRootConstantBufferView(0, m_cubeObjectCBs[idx]->Resource()->GetGPUVirtualAddress());
-		m_commandList->SetGraphicsRootConstantBufferView(2, m_cubeMaterialCBs[idx]->Resource()->GetGPUVirtualAddress());
-		m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
+		XMVECTOR center = XMLoadFloat3(&m_cubeInstances[idx].position);
+		XMVECTOR camPos = XMLoadFloat3(&m_camPos);
+		float dist = XMVectorGetX(XMVector3Length(center - camPos));
+
+		if (m_billboardEnabled && dist > m_billboardDistance) {
+			BillboardInstance bb;
+			bb.Position = m_cubeInstances[idx].position;
+			float scale = m_cubeInstances[idx].scale.x;
+			bb.Size = { scale * 2.0f, scale * 2.0f };
+			bb.Color = m_cubeInstances[idx].color;
+			m_billboardInstances.push_back(bb);
+		}
+		else {
+			// рисуем куб
+			m_commandList->SetGraphicsRootConstantBufferView(0, m_cubeObjectCBs[idx]->Resource()->GetGPUVirtualAddress());
+			m_commandList->SetGraphicsRootConstantBufferView(2, m_cubeMaterialCBs[idx]->Resource()->GetGPUVirtualAddress());
+			m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
+		}
 	}
 }
 
@@ -1759,5 +1780,34 @@ void Framework::DrawOctree()
 		leafBuffers[i]->CopyData(0, obj);
 		m_commandList->SetGraphicsRootConstantBufferView(0, leafBuffers[i]->Resource()->GetGPUVirtualAddress());
 		m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
+	}
+}
+
+void Framework::DrawBillboards()
+{
+	if (!m_billboardEnabled || m_billboardInstances.empty())
+		return;
+
+	if (m_billboardCBs.size() < m_billboardInstances.size()) {
+		size_t oldSize = m_billboardCBs.size();
+		m_billboardCBs.resize(m_billboardInstances.size());
+		for (size_t i = oldSize; i < m_billboardInstances.size(); ++i) {
+			m_billboardCBs[i] = std::make_unique<UploadBuffer<BillboardConstants>>(m_device.Get(), 1, true);
+		}
+	}
+
+	m_commandList->SetPipelineState(m_renderingSystem.BillboardPSO());
+	m_commandList->SetGraphicsRootSignature(m_renderingSystem.BillboardRootSignature());
+	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+	for (size_t i = 0; i < m_billboardInstances.size(); ++i) {
+		BillboardConstants bb;
+		bb.Position = m_billboardInstances[i].Position;
+		bb.Size = m_billboardInstances[i].Size;
+		bb.Color = m_billboardInstances[i].Color;
+		m_billboardCBs[i]->CopyData(0, bb);
+		m_commandList->SetGraphicsRootConstantBufferView(0, m_billboardCBs[i]->Resource()->GetGPUVirtualAddress());
+		m_commandList->SetGraphicsRootConstantBufferView(1, m_passCB->Resource()->GetGPUVirtualAddress());
+		m_commandList->DrawInstanced(4, 1, 0, 0);
 	}
 }

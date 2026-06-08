@@ -117,6 +117,14 @@ struct alignas(16) LightingConstants
 	int NumSpotLights = 0;
 };
 
+struct alignas(16) BillboardConstants {
+	DirectX::XMFLOAT3 Position;
+	float pad0;
+	DirectX::XMFLOAT2 Size;
+	float pad1[2];
+	DirectX::XMFLOAT4 Color;
+};
+
 static_assert(sizeof(ObjectConstants) % 16 == 0, "ObjectConstants must be 16-byte aligned sized.");
 static_assert(sizeof(PassConstants) % 16 == 0, "PassConstants must be 16-byte aligned sized.");
 static_assert(sizeof(MaterialConstants) == 64, "MaterialConstants size must be 64 bytes (match HLSL cbuffer)");

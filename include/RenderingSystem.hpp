@@ -26,6 +26,9 @@ public:
 
 	ID3D12RootSignature* WaterRootSignature() const { return m_waterRootSignature.Get(); }
 	ID3D12PipelineState* WaterPSO() const { return m_waterPso.Get(); }
+
+	ID3D12RootSignature* BillboardRootSignature() const { return m_billboardRootSignature.Get(); }
+	ID3D12PipelineState* BillboardPSO() const { return m_billboardPso.Get(); }
 private:
 	ComPtr<ID3DBlob> m_geometryVsByteCode;
 	ComPtr<ID3DBlob> m_geometryPsByteCode;
@@ -58,6 +61,11 @@ private:
 	ComPtr<ID3DBlob> m_waterHsByteCode;
 	ComPtr<ID3DBlob> m_waterDsByteCode;
 	ComPtr<ID3DBlob> m_waterPsByteCode;
+
+	ComPtr<ID3D12RootSignature> m_billboardRootSignature;
+	ComPtr<ID3D12PipelineState> m_billboardPso;
+	ComPtr<ID3DBlob> m_billboardVsByteCode;
+	ComPtr<ID3DBlob> m_billboardPsByteCode;
 };
 
 #endif // RENDERING_SYSTEM_HPP
