@@ -12,6 +12,9 @@ namespace dx {
 	}
 }
 
+static constexpr UINT SHADOW_CASCADE_COUNT = 4;
+static constexpr UINT SHADOW_MAP_SIZE = 4096;
+
 struct Vertex {
 	DirectX::XMFLOAT3 Pos;
 	DirectX::XMFLOAT3 Normal;
@@ -44,6 +47,9 @@ struct alignas(16) PassConstants {
 	float MaxTessDistance = 30.0f;
 	float MinTessFactor = 8.0f;
 	float MaxTessFactor = 1.0f;
+
+	DirectX::XMFLOAT4X4 ShadowViewProj[SHADOW_CASCADE_COUNT];
+	DirectX::XMFLOAT4   ShadowCascadeSplits;
 };
 
 struct alignas(16) MaterialConstants {
@@ -67,6 +73,10 @@ struct alignas(16) MaterialConstants {
 static constexpr int kMaxDirLights = 4;
 static constexpr int kMaxPointLights = 1024;
 static constexpr int kMaxSpotLights = 8;
+
+struct alignas(16) ShadowPassConstants {
+	DirectX::XMFLOAT4X4 LightViewProj;
+};
 
 struct alignas(16) DirectionalLight
 {
@@ -115,6 +125,9 @@ struct alignas(16) LightingConstants
 	int NumDirLights = 0;
 	int NumPointLights = 0;
 	int NumSpotLights = 0;
+
+	DirectX::XMFLOAT4X4 ShadowViewProj[SHADOW_CASCADE_COUNT];
+	DirectX::XMFLOAT4   ShadowCascadeSplits;
 };
 
 struct alignas(16) BillboardConstants {

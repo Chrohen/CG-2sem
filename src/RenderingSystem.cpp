@@ -131,7 +131,7 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 	}
 
 	{
-		const UINT kLightingTextureCount = 3;
+		const UINT kLightingTextureCount = 4;
 
 		D3D12_DESCRIPTOR_RANGE srvRange = {};
 		srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -152,26 +152,41 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 		params[1].DescriptorTable.pDescriptorRanges = &srvRange;
 		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-		D3D12_STATIC_SAMPLER_DESC samp = {};
-		samp.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
-		samp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-		samp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-		samp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-		samp.MipLODBias = 0.0f;
-		samp.MaxAnisotropy = 1;
-		samp.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-		samp.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
-		samp.MinLOD = 0.0f;
-		samp.MaxLOD = D3D12_FLOAT32_MAX;
-		samp.ShaderRegister = 0;
-		samp.RegisterSpace = 0;
-		samp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
+
+		samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+		samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[0].MipLODBias = 0.0f;
+		samplers[0].MaxAnisotropy = 1;
+		samplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		samplers[0].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+		samplers[0].MinLOD = 0.0f;
+		samplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+		samplers[0].ShaderRegister = 0;
+		samplers[0].RegisterSpace = 0;
+		samplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		samplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+		samplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[1].MipLODBias = 0.0f;
+		samplers[1].MaxAnisotropy = 1;
+		samplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+		samplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+		samplers[1].MinLOD = 0.0f;
+		samplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+		samplers[1].ShaderRegister = 1;
+		samplers[1].RegisterSpace = 0;
+		samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 		D3D12_ROOT_SIGNATURE_DESC desc = {};
 		desc.NumParameters = _countof(params);
 		desc.pParameters = params;
-		desc.NumStaticSamplers = 1;
-		desc.pStaticSamplers = &samp;
+		desc.NumStaticSamplers = _countof(samplers);
+		desc.pStaticSamplers = samplers;
 		desc.Flags =
 			D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
 			D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |

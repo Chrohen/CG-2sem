@@ -43,13 +43,19 @@ cbuffer LightingCB : register(b0)
     int gNumDirLights;
     int gNumPointLights;
     int gNumSpotLights;
+    
+    
+    float4x4 gShadowViewProj[4];
+    float4 gShadowCascadeSplits;
 };
 
 Texture2D gAlbedo : register(t0); 
 Texture2D gNormal : register(t1); 
 Texture2D gDepth : register(t2);
+Texture2DArray gShadowMap : register(t3);
 
 SamplerState gSamPoint : register(s0);
+SamplerComparisonState gShadowSampler : register(s1);
 
 float3 WorldPosFromDepth(float2 uv, float depth)
 {
@@ -61,6 +67,43 @@ float3 WorldPosFromDepth(float2 uv, float depth)
     
     return worldPos.xyz / worldPos.w;
 }
+
+float CalcShadow(float3 worldPos)
+{
+    float depth = distance(worldPos, gEyePosW);
+    uint cascadeIndex = 0;
+    if (depth > gShadowCascadeSplits.x)
+        cascadeIndex = 1;
+    if (depth > gShadowCascadeSplits.y)
+        cascadeIndex = 2;
+    if (depth > gShadowCascadeSplits.z)
+        cascadeIndex = 3;
+
+    float4 shadowPos = mul(float4(worldPos, 1.0f), gShadowViewProj[cascadeIndex]);
+    shadowPos.xyz /= shadowPos.w;
+    float2 shadowTexC = shadowPos.xy * 0.5f + 0.5f;
+    shadowTexC.y = 1.0f - shadowTexC.y;
+    float currentDepth = shadowPos.z;
+
+    if (currentDepth > 1.0f)
+        return 1.0f;
+    float shadow = 0.0f;
+    float width, height, elements;
+    gShadowMap.GetDimensions(width, height, elements);
+    float2 texelSize = 1.0f / float2(width, height);
+    currentDepth -= 0.001f;
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float2 offset = float2(x, y) * texelSize;
+            shadow += gShadowMap.SampleCmpLevelZero(gShadowSampler,
+                float3(shadowTexC + offset, (float) cascadeIndex), currentDepth).r;
+        }
+    }
+    return shadow / 9.0f;
+}
+
 
 float3 CalcSpecular(float3 N, float3 L, float3 V, float3 color)
 {
@@ -138,6 +181,16 @@ VSOut VSFullscreen(uint id : SV_VertexID)
     return vout;
 }
 
+float3 evaluateDirectionalLight(DirectionalLight light, float3 N, float3 V, float3 albedo, float3 worldPos)
+{
+    float3 L = normalize(-light.Direction);
+    float NdotL = max(dot(N, L), 0.0f);
+    float shadowFactor = CalcShadow(worldPos);
+    float3 diff = light.Color * light.Intensity * albedo * NdotL * shadowFactor;
+    float3 spec = CalcSpecular(N, L, V, light.Color * light.Intensity) * NdotL * shadowFactor;
+    return diff + spec;
+}
+
 float4 PSLighting(VSOut pin) : SV_Target
 {
     float depth = gDepth.Sample(gSamPoint, pin.UV).r;
@@ -155,7 +208,7 @@ float4 PSLighting(VSOut pin) : SV_Target
     float3 color = gAmbient.rgb * albedo;
     
     for (int d = 0; d < gNumDirLights; ++d)
-        color += CalcDirectional(gDirLights[d], N, V, albedo);
+        color += evaluateDirectionalLight(gDirLights[d], N, V, albedo, worldPos);
     
     for (int p = 0; p < gNumPointLights; ++p)
         color += CalcPoint(gPointLights[p], worldPos, N, V, albedo);

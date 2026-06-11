@@ -178,7 +178,7 @@ VertexOut DSMain(QuadPatchTess tessFactors, float2 uv : SV_DomainLocation,
     float3 originalPos = posW;
     
     float height = WaveHeight(originalPos, gTime);
-    posW.y = height;
+    posW.y = posW.y + height;
     
     const float eps = 0.01;
     normalW = ComputeWaveNormal(originalPos, gTime, eps);

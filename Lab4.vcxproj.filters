@@ -59,6 +59,9 @@
     <None Include="shader\Billboard.hlsl">
       <Filter>Файлы ресурсов</Filter>
     </None>
+    <None Include="shader\Shadow.hlsl">
+      <Filter>Файлы ресурсов</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\Framework.hpp">

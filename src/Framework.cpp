@@ -23,6 +23,11 @@
 
 using namespace DirectX;
 
+static constexpr float NEAR_Z = 0.1f;
+static constexpr float FAR_Z = 1000.0f;
+static constexpr float SPLIT_DISTANCES[5] = { 0.0f, 0.05f, 0.15f, 0.3f, 1.0f };
+
+
 Framework::Framework(int width, int height, const wchar_t* title)
 	: m_initWidth(width)
 	, m_initHeight(height)
@@ -59,12 +64,15 @@ bool Framework::Init()
 
 	BuildConstantBuffers();
 	BuildBoxGeometry();
-	GenerateCubes(5000);
+	GenerateCubes(500);
 	BuildOctree();
 	m_octreeCB = std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true);
 	BuildObjVB_Upload();
 	InitFallingLights();
 	BuildWaterPlane();
+	BuildShadowResources();
+	BuildShadowRootSignature();
+	BuildShadowPSO();
 
 	OnResize();
 
@@ -262,29 +270,8 @@ void Framework::OnResize()
 
 	m_gbuffer.Resize(m_device.Get(), m_clientWidth, m_clientHeight, m_rtvDescriptorSize);
 
-	{
-		D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-		heapDesc.NumDescriptors = 3;
-		heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-		heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-		ThrowIfFailed(m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_gbufferSrvHeap)));
-
-		m_gbuffer.CreateSrvDescriptors(
-			m_device.Get(),
-			m_gbufferSrvHeap->GetCPUDescriptorHandleForHeapStart(),
-			m_cbvSrvUavDescriptorSize);
-
-		D3D12_CPU_DESCRIPTOR_HANDLE depthSrvHandle = m_gbufferSrvHeap->GetCPUDescriptorHandleForHeapStart();
-		depthSrvHandle.ptr += 2 * m_cbvSrvUavDescriptorSize;
-
-		D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc = {};
-		depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		depthSrvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-		depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		depthSrvDesc.Texture2D.MipLevels = 1;
-		depthSrvDesc.Texture2D.MostDetailedMip = 0;
-		m_device->CreateShaderResourceView(m_depthStencilBuffer.Get(), &depthSrvDesc, depthSrvHandle);
-	}
+	m_gbufferSrvHeap.Reset();
+	BuildGBufferSrvHeap();
 
 	m_screenViewport = { 0.f, 0.f,
 		static_cast<float>(m_clientWidth), static_cast<float>(m_clientHeight),
@@ -321,12 +308,14 @@ void Framework::Update(const double& dt)
 	}
 
 	ObjectConstants obj = {};
-	XMMATRIX world =
-		XMMatrixTranslation(-m_modelCenter.x, -m_modelCenter.y, -m_modelCenter.z) *
+	XMMATRIX world = XMMatrixTranslation(-m_modelCenter.x, -m_modelCenter.y, -m_modelCenter.z) *
 		XMMatrixScaling(m_modelScale, m_modelScale, m_modelScale);
-	XMMATRIX worldInvTranspose = XMMatrixTranspose(XMMatrixInverse(nullptr, world));
+
+	XMMATRIX worldInv = XMMatrixInverse(nullptr, world);
+
 	XMStoreFloat4x4(&obj.World, XMMatrixTranspose(world));
-	XMStoreFloat4x4(&obj.WorldInvTranspose, worldInvTranspose);
+	XMStoreFloat4x4(&obj.WorldInvTranspose, XMMatrixTranspose(worldInv));
+
 	m_objectCB->CopyData(0, obj);
 
 	XMVECTOR pos = XMLoadFloat3(&m_camPos);
@@ -377,8 +366,6 @@ void Framework::Update(const double& dt)
 	pass.MinTessFactor = 0.001f;
 	pass.MaxTessFactor = 8.0f;
 
-	m_passCB->CopyData(0, pass);
-
 	LightingConstants lc{};
 	XMStoreFloat3(&lc.EyePosW, pos);
 	lc.Ambient = { 0.15f, 0.15f, 0.15f, 1.0f };
@@ -424,6 +411,31 @@ void Framework::Update(const double& dt)
 	lc.SpotLights[0].Color = { 1.0f, 1.0f, 0.8f };
 	lc.SpotLights[0].Intensity = 4.0f;
 
+	DirectionalLight dirLight;
+	dirLight.Direction = { 0.577f, -0.577f, 0.577f };
+	dirLight.Color = { 1.0f, 0.95f, 0.85f };
+	dirLight.Intensity = 1.0f;
+
+	ComputeCascades(view * proj);
+	for (UINT i = 0; i < SHADOW_CASCADE_COUNT && i < (UINT)mCascades.size(); ++i) {
+		ShadowPassConstants spc;
+		XMMATRIX lightViewProj = GetLightViewProj(mCascades[i], dirLight);
+		XMStoreFloat4x4(&spc.LightViewProj, XMMatrixTranspose(lightViewProj));
+		mShadowPassCB->CopyData(i, spc);
+
+		XMStoreFloat4x4(&pass.ShadowViewProj[i], XMMatrixTranspose(lightViewProj));
+	}
+	pass.ShadowCascadeSplits = XMFLOAT4(
+		NEAR_Z + SPLIT_DISTANCES[1] * (FAR_Z - NEAR_Z),
+		NEAR_Z + SPLIT_DISTANCES[2] * (FAR_Z - NEAR_Z),
+		NEAR_Z + SPLIT_DISTANCES[3] * (FAR_Z - NEAR_Z),
+		NEAR_Z + SPLIT_DISTANCES[4] * (FAR_Z - NEAR_Z)
+	);
+	for (UINT i = 0; i < SHADOW_CASCADE_COUNT; ++i)
+		XMStoreFloat4x4(&lc.ShadowViewProj[i], XMLoadFloat4x4(&pass.ShadowViewProj[i]));
+	lc.ShadowCascadeSplits = pass.ShadowCascadeSplits;
+
+	m_passCB->CopyData(0, pass);
 	m_lightingCB->CopyData(0, lc);
 }
 
@@ -486,6 +498,93 @@ void Framework::Draw()
 		return;
 	}
 
+	auto shadowToDepth = CD3DX12_RESOURCE_BARRIER::Transition(mShadowMap.Get(),
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	m_commandList->ResourceBarrier(1, &shadowToDepth);
+
+	m_commandList->RSSetViewports(1, &mShadowViewport);
+	m_commandList->RSSetScissorRects(1, &mShadowScissorRect);
+	m_commandList->SetGraphicsRootSignature(mShadowRootSignature.Get());
+	m_commandList->SetPipelineState(mShadowPSO.Get());
+	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	ID3D12DescriptorHeap* heaps[] = { m_srvHeap.Get() };
+	m_commandList->SetDescriptorHeaps(1, heaps);
+
+	UINT dsvSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(mShadowDsvHeap->GetCPUDescriptorHandleForHeapStart());
+
+	const UINT shadowPassCbvSize = CalcConstantBufferByteSize(sizeof(ShadowPassConstants));
+	D3D12_GPU_VIRTUAL_ADDRESS shadowPassGpuBase = mShadowPassCB->Resource()->GetGPUVirtualAddress();
+
+	if (!mShadowDsvHeap) {
+		OutputDebugStringW(L"ERROR: mShadowDsvHeap is null!\n");
+		return;
+	}
+	if (dsvHandle.ptr == 0) {
+		OutputDebugStringW(L"ERROR: Shadow DSV heap start handle is zero!\n");
+		return;
+	}
+
+	for (UINT cascade = 0; cascade < SHADOW_CASCADE_COUNT; ++cascade)
+	{
+		assert(mShadowDsvHeap->GetCPUDescriptorHandleForHeapStart().ptr != 0);
+
+		m_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		m_commandList->OMSetRenderTargets(0, nullptr, FALSE, &dsvHandle);
+
+		D3D12_GPU_VIRTUAL_ADDRESS cbAddress = shadowPassGpuBase + cascade * shadowPassCbvSize;
+		m_commandList->SetGraphicsRootConstantBufferView(1, cbAddress);
+
+		if (m_modelVB && m_modelVertexCount > 0)
+		{
+			m_commandList->IASetVertexBuffers(0, 1, &m_modelVBV);
+			m_commandList->IASetIndexBuffer(nullptr);
+
+			m_commandList->SetGraphicsRootConstantBufferView(0, m_objectCB->Resource()->GetGPUVirtualAddress());
+
+			for (const auto& range : m_drawRanges)
+			{
+				int matId = range.materialId;
+				if (matId < 0 || matId >= (int)m_materialCBs.size())
+					matId = 0;
+
+				int texIndex = m_matTexIndex[matId];
+				if (texIndex < 0) texIndex = 0;
+
+				D3D12_GPU_DESCRIPTOR_HANDLE texHandle = m_srvHeap->GetGPUDescriptorHandleForHeapStart();
+				texHandle.ptr += texIndex * m_cbvSrvUavDescriptorSize;
+				m_commandList->SetGraphicsRootDescriptorTable(2, texHandle);
+
+				m_commandList->DrawInstanced(range.vertexCount, 1, range.startVertex, 0);
+			}
+		}
+
+		if (!m_cubeInstances.empty())
+		{
+			m_commandList->IASetVertexBuffers(0, 1, &m_boxVBView);
+			m_commandList->IASetIndexBuffer(&m_boxIBView);
+
+			D3D12_GPU_DESCRIPTOR_HANDLE whiteTexHandle = m_srvHeap->GetGPUDescriptorHandleForHeapStart();
+			whiteTexHandle.ptr += 0;
+			m_commandList->SetGraphicsRootDescriptorTable(2, whiteTexHandle);
+
+			for (size_t i = 0; i < m_cubeInstances.size(); ++i)
+			{
+				m_commandList->SetGraphicsRootConstantBufferView(0, m_cubeObjectCBs[i]->Resource()->GetGPUVirtualAddress());
+				m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
+			}
+		}
+
+		dsvHandle.Offset(1, dsvSize);
+	}
+
+	m_commandList->RSSetViewports(1, &m_screenViewport);
+	m_commandList->RSSetScissorRects(1, &m_scissorRect);
+
+	auto shadowToSrv = CD3DX12_RESOURCE_BARRIER::Transition(mShadowMap.Get(),
+		D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	m_commandList->ResourceBarrier(1, &shadowToSrv);
 
 	m_gbuffer.TransitionToRenderTargets(m_commandList.Get());
 	m_gbuffer.Clear(m_commandList.Get());
@@ -802,16 +901,41 @@ void Framework::BuildConstantBuffers()
 
 void Framework::BuildGBufferSrvHeap()
 {
+	const UINT numDescriptors = 4;
+
 	D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-	desc.NumDescriptors = Gbuffer::kTargetCount;
+	desc.NumDescriptors = numDescriptors;
 	desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(m_device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&m_gbufferSrvHeap)));
 
-	m_gbuffer.CreateSrvDescriptors(
-		m_device.Get(),
-		m_gbufferSrvHeap->GetCPUDescriptorHandleForHeapStart(),
-		m_cbvSrvUavDescriptorSize);
+	D3D12_CPU_DESCRIPTOR_HANDLE handle = m_gbufferSrvHeap->GetCPUDescriptorHandleForHeapStart();
+
+	m_gbuffer.CreateSrvDescriptors(m_device.Get(), handle, m_cbvSrvUavDescriptorSize);
+	handle.ptr += 2 * m_cbvSrvUavDescriptorSize;
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc = {};
+	depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	depthSrvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+	depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	depthSrvDesc.Texture2D.MostDetailedMip = 0;
+	depthSrvDesc.Texture2D.MipLevels = 1;
+	depthSrvDesc.Texture2D.PlaneSlice = 0;
+	depthSrvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+	m_device->CreateShaderResourceView(m_depthStencilBuffer.Get(), &depthSrvDesc, handle);
+	handle.ptr += m_cbvSrvUavDescriptorSize;
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC shadowSrvDesc = {};
+	shadowSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	shadowSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	shadowSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+	shadowSrvDesc.Texture2DArray.MostDetailedMip = 0;
+	shadowSrvDesc.Texture2DArray.MipLevels = 1;
+	shadowSrvDesc.Texture2DArray.FirstArraySlice = 0;
+	shadowSrvDesc.Texture2DArray.ArraySize = SHADOW_CASCADE_COUNT;
+	shadowSrvDesc.Texture2DArray.PlaneSlice = 0;
+	shadowSrvDesc.Texture2DArray.ResourceMinLODClamp = 0.0f;
+	m_device->CreateShaderResourceView(mShadowMap.Get(), &shadowSrvDesc, handle);
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE Framework::CurrentBackBufferView() const
@@ -1430,7 +1554,7 @@ void Framework::InitFallingLights()
 void Framework::BuildWaterPlane()
 {
 	const float halfSize = 10.0f;
-	const float yLevel = 0.025f;
+	const float yLevel = -0.5f;
 
 	Vertex vertices[4] = {
 		{ {-halfSize, yLevel, -halfSize}, {0,1,0}, {0,0}, {1,1,1,1} },
@@ -1628,7 +1752,6 @@ void Framework::DrawCubes()
 			m_billboardInstances.push_back(bb);
 		}
 		else {
-			// рисуем куб
 			m_commandList->SetGraphicsRootConstantBufferView(0, m_cubeObjectCBs[idx]->Resource()->GetGPUVirtualAddress());
 			m_commandList->SetGraphicsRootConstantBufferView(2, m_cubeMaterialCBs[idx]->Resource()->GetGPUVirtualAddress());
 			m_commandList->DrawIndexedInstanced(m_boxIndexCount, 1, 0, 0, 0);
@@ -1810,4 +1933,200 @@ void Framework::DrawBillboards()
 		m_commandList->SetGraphicsRootConstantBufferView(1, m_passCB->Resource()->GetGPUVirtualAddress());
 		m_commandList->DrawInstanced(4, 1, 0, 0);
 	}
+}
+
+void Framework::BuildShadowResources() {
+	D3D12_RESOURCE_DESC shadowDesc = {};
+	shadowDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	shadowDesc.Width = SHADOW_MAP_SIZE;
+	shadowDesc.Height = SHADOW_MAP_SIZE;
+	shadowDesc.DepthOrArraySize = SHADOW_CASCADE_COUNT;
+	shadowDesc.MipLevels = 1;
+	shadowDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+	shadowDesc.SampleDesc.Count = 1;
+	shadowDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_CLEAR_VALUE shadowClearValue = {};
+	shadowClearValue.Format = DXGI_FORMAT_D32_FLOAT;
+	shadowClearValue.DepthStencil.Depth = 1.0f;
+	shadowClearValue.DepthStencil.Stencil = 0;
+
+	D3D12_HEAP_PROPERTIES defaultHeap = {};
+	defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
+	ThrowIfFailed(m_device->CreateCommittedResource(
+		&defaultHeap,
+		D3D12_HEAP_FLAG_NONE,
+		&shadowDesc,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		&shadowClearValue,
+		IID_PPV_ARGS(&mShadowMap)));
+
+	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
+	dsvHeapDesc.NumDescriptors = SHADOW_CASCADE_COUNT;
+	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	ThrowIfFailed(m_device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&mShadowDsvHeap)));
+
+	UINT dsvSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(mShadowDsvHeap->GetCPUDescriptorHandleForHeapStart());
+	for (UINT i = 0; i < SHADOW_CASCADE_COUNT; ++i) {
+		D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+		dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+		dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+		dsvDesc.Texture2DArray.FirstArraySlice = i;
+		dsvDesc.Texture2DArray.ArraySize = 1;
+		dsvDesc.Texture2DArray.MipSlice = 0;
+		m_device->CreateDepthStencilView(mShadowMap.Get(), &dsvDesc, dsvHandle);
+		dsvHandle.Offset(1, dsvSize);
+	}
+
+	mShadowViewport = { 0.0f, 0.0f, (float)SHADOW_MAP_SIZE, (float)SHADOW_MAP_SIZE, 0.0f, 1.0f };
+	mShadowScissorRect = { 0, 0, (LONG)SHADOW_MAP_SIZE, (LONG)SHADOW_MAP_SIZE };
+
+	mShadowPassCB = std::make_unique<UploadBuffer<ShadowPassConstants>>(m_device.Get(), SHADOW_CASCADE_COUNT, true);
+}
+
+void Framework::BuildShadowRootSignature()
+{
+	CD3DX12_DESCRIPTOR_RANGE srvRange;
+	srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+	CD3DX12_ROOT_PARAMETER params[3];
+	params[0].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_VERTEX);
+	params[1].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_VERTEX);
+	params[2].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_PIXEL);
+
+	CD3DX12_STATIC_SAMPLER_DESC samplers[2];
+	samplers[0].Init(0, D3D12_FILTER_MIN_MAG_MIP_POINT);
+	samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	samplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	samplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	samplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	samplers[1].Init(1, D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT,
+		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+		0.0f, 16,
+		D3D12_COMPARISON_FUNC_LESS_EQUAL,
+		D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE);
+	samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc;
+	rootSigDesc.Init(_countof(params), params, _countof(samplers), samplers,
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	ComPtr<ID3DBlob> serializedSig, errorBlob;
+	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		serializedSig.GetAddressOf(), errorBlob.GetAddressOf());
+	if (FAILED(hr))
+	{
+		if (errorBlob)
+			OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+		ThrowIfFailed(hr);
+	}
+	ThrowIfFailed(m_device->CreateRootSignature(0,
+		serializedSig->GetBufferPointer(),
+		serializedSig->GetBufferSize(),
+		IID_PPV_ARGS(&mShadowRootSignature)));
+}
+
+void Framework::BuildShadowPSO()
+{
+	auto vs = CompileShader(L"shader/Shadow.hlsl", nullptr, "ShadowVS", "vs_5_1");
+	auto ps = CompileShader(L"shader/Shadow.hlsl", nullptr, "ShadowPS", "ps_5_1");
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+	psoDesc.pRootSignature = mShadowRootSignature.Get();
+	psoDesc.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
+	psoDesc.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState.DepthBias = 50;
+	psoDesc.RasterizerState.SlopeScaledDepthBias = 1.0f;
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 0;
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	psoDesc.SampleDesc.Count = 1;
+
+	std::vector<D3D12_INPUT_ELEMENT_DESC> inputLayout = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+	};
+	psoDesc.InputLayout = { inputLayout.data(), (UINT)inputLayout.size() };
+
+	ThrowIfFailed(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mShadowPSO)));
+}
+
+void Framework::ComputeCascades(const XMMATRIX& viewProj)
+{
+	mCascades.clear();
+
+	XMMATRIX invViewProj = XMMatrixInverse(nullptr, viewProj);
+
+	XMVECTOR frustumCorners[8] = {
+		XMVectorSet(-1.0f,  1.0f, 0.0f, 1.0f),
+		XMVectorSet(1.0f,  1.0f, 0.0f, 1.0f),
+		XMVectorSet(1.0f, -1.0f, 0.0f, 1.0f),
+		XMVectorSet(-1.0f, -1.0f, 0.0f, 1.0f),
+		XMVectorSet(-1.0f,  1.0f, 1.0f, 1.0f),
+		XMVectorSet(1.0f,  1.0f, 1.0f, 1.0f),
+		XMVectorSet(1.0f, -1.0f, 1.0f, 1.0f),
+		XMVectorSet(-1.0f, -1.0f, 1.0f, 1.0f)
+	};
+
+	XMVECTOR worldCorners[8];
+	for (int i = 0; i < 8; ++i) {
+		worldCorners[i] = XMVector4Transform(frustumCorners[i], invViewProj);
+		worldCorners[i] /= XMVectorGetW(worldCorners[i]);
+	}
+
+	for (int i = 0; i < 4; ++i) {
+		CascadeFrustum cascade;
+		float n = SPLIT_DISTANCES[i];
+		float f = SPLIT_DISTANCES[i + 1];
+
+		XMVECTOR center = XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f);
+		for (int j = 0; j < 4; ++j) {
+			XMVECTOR nearPoint = worldCorners[j] + n * (worldCorners[j + 4] - worldCorners[j]);
+			XMVECTOR farPoint = worldCorners[j] + f * (worldCorners[j + 4] - worldCorners[j]);
+			XMStoreFloat3(&cascade.vertices[j], nearPoint);
+			XMStoreFloat3(&cascade.vertices[j + 4], farPoint);
+			center += nearPoint + farPoint;
+		}
+		XMStoreFloat3(&cascade.center, center / 8.0f);
+		mCascades.push_back(cascade);
+	}
+}
+
+XMMATRIX Framework::GetLightViewProj(const CascadeFrustum& cascade, const DirectionalLight& light) const
+{
+	XMVECTOR center = XMLoadFloat3(&cascade.center);
+	XMVECTOR lightDir = XMLoadFloat3(&light.Direction);
+	XMMATRIX lightView = XMMatrixLookAtLH(center, center + lightDir, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+
+	float minX = FLT_MAX, maxX = -FLT_MAX;
+	float minY = FLT_MAX, maxY = -FLT_MAX;
+	float minZ = FLT_MAX, maxZ = -FLT_MAX;
+
+	for (int i = 0; i < 8; ++i) {
+		XMVECTOR v = XMVector3Transform(XMLoadFloat3(&cascade.vertices[i]), lightView);
+		float x = XMVectorGetX(v), y = XMVectorGetY(v), z = XMVectorGetZ(v);
+		minX = min(minX, x); maxX = max(maxX, x);
+		minY = min(minY, y); maxY = max(maxY, y);
+		minZ = min(minZ, z); maxZ = max(maxZ, z);
+	}
+	
+	const float zMult = 10.0f;
+	minZ -= fabsf(minZ) * (zMult - 1.0f);
+	maxZ += fabsf(maxZ) * (zMult - 1.0f);
+
+	XMMATRIX lightProj = XMMatrixOrthographicOffCenterLH(minX, maxX, minY, maxY, minZ, maxZ);
+	return lightView * lightProj;
 }

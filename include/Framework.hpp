@@ -36,8 +36,8 @@ struct CubeInstance {
 
 struct BillboardInstance {
 	DirectX::XMFLOAT3 Position;
-	DirectX::XMFLOAT2 Size;      // ширина и высота билборда
-	DirectX::XMFLOAT4 Color;     // цвет или albedo
+	DirectX::XMFLOAT2 Size;
+	DirectX::XMFLOAT4 Color;
 };
 
 class Framework : public IWindowMessageHandler {
@@ -265,6 +265,31 @@ private:
 	size_t m_lastBillboardCount = 0;
 
 	void DrawBillboards();
+
+	// Тени
+	ComPtr<ID3D12Resource>mShadowMap;
+	ComPtr<ID3D12DescriptorHeap>mShadowDsvHeap;
+	UINT mShadowMapSrvIndex;
+
+	ComPtr<ID3D12RootSignature> mShadowRootSignature;
+	ComPtr<ID3D12PipelineState> mShadowPSO;
+
+	std::unique_ptr<UploadBuffer<ShadowPassConstants>> mShadowPassCB;
+
+	struct CascadeFrustum {
+		DirectX::XMFLOAT3 vertices[8];
+		DirectX::XMFLOAT3 center;
+	};
+	std::vector<CascadeFrustum> mCascades;
+	D3D12_VIEWPORT mShadowViewport;
+	D3D12_RECT     mShadowScissorRect;
+
+	void BuildShadowResources();
+	void BuildShadowRootSignature();
+	void BuildShadowPSO();
+	void ComputeCascades(const DirectX::XMMATRIX& viewProj);
+	DirectX::XMMATRIX GetLightViewProj(const CascadeFrustum& cascade, const DirectionalLight& light) const;
+	void RenderShadowPass();
 };
 
 #endif // FRAMEWORK_HPP
