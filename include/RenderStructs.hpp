@@ -128,6 +128,14 @@ struct alignas(16) LightingConstants
 
 	DirectX::XMFLOAT4X4 ShadowViewProj[SHADOW_CASCADE_COUNT];
 	DirectX::XMFLOAT4   ShadowCascadeSplits;
+
+	DirectX::XMFLOAT4 gVignetteParams;
+
+	DirectX::XMFLOAT4 gVCRParams;
+	DirectX::XMFLOAT4 gVCRTimeParams;
+	
+	DirectX::XMFLOAT4 gOutlineColor;
+	DirectX::XMFLOAT4 gOutlineThresholds;
 };
 
 struct alignas(16) BillboardConstants {

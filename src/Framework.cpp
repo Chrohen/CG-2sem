@@ -435,6 +435,29 @@ void Framework::Update(const double& dt)
 		XMStoreFloat4x4(&lc.ShadowViewProj[i], XMLoadFloat4x4(&pass.ShadowViewProj[i]));
 	lc.ShadowCascadeSplits = pass.ShadowCascadeSplits;
 
+	lc.gVignetteParams = XMFLOAT4(0.6f, 1.5f, 0.8f, 0.0f);
+	// x = intensity
+	// y = power
+	// z = inner radius
+
+	// VCR effect settings
+	lc.gVCRParams = XMFLOAT4(0.02f, 0.25f, 0.15f, 0.01f);
+	// x = chromatic aberration
+	// y = scanline intensity
+	// z = static noise intensity
+	// w = jitter amount
+	lc.gVCRTimeParams = XMFLOAT4(static_cast<float>(m_timer.TotalTime()), 2.0f, 3.5f, 0.0f);
+	// x = global time
+	// y = scanline scroll speed
+	// z = jitter speed
+
+	// Outline settings
+	lc.gOutlineColor = XMFLOAT4(1.0f, 0.2f, 0.2f, 1.0f);
+	lc.gOutlineThresholds = XMFLOAT4(0.05f, 0.25f, 0.8f, 0.0f);
+	// x = depthThreshold
+	// y = normalThreshold
+	// z = outlineStrength
+
 	m_passCB->CopyData(0, pass);
 	m_lightingCB->CopyData(0, lc);
 }

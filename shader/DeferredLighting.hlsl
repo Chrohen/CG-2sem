@@ -47,6 +47,12 @@ cbuffer LightingCB : register(b0)
     
     float4x4 gShadowViewProj[4];
     float4 gShadowCascadeSplits;
+    
+    float4 gVignetteParams;
+    float4 gVCRParams;
+    float4 gVCRTimeParams;
+    float4 gOutlineColor;
+    float4 gOutlineThresholds;
 };
 
 Texture2D gAlbedo : register(t0); 
@@ -191,11 +197,61 @@ float3 evaluateDirectionalLight(DirectionalLight light, float3 N, float3 V, floa
     return diff + spec;
 }
 
+float Random(float2 seed)
+{
+    return frac(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
+}
+
+float ScanlineEffect(float2 uv, float intensity)
+{
+    float time = gVCRTimeParams.x;
+    float scanline = sin(uv.y * 1080.0 * 3.14159 + time * 20.0) * 0.5 + 0.5;
+    scanline = pow(scanline, 2.0);
+    return lerp(1.0, 1.0 - scanline * intensity, 0.5 + 0.5 * sin(time * gVCRTimeParams.y));
+}
+
+float2 JitterOffset(float2 uv, float amount)
+{
+    float time = gVCRTimeParams.x;
+    float jitter = sin(time * gVCRTimeParams.z) * amount;
+    jitter += sin(time * 37.0) * amount * 0.3;
+    uv.x += jitter;
+    return uv;
+}
+
+bool IsEdge(float2 uv, float centerDepth, float3 centerNormal, float2 texelSize)
+{
+    float2 offsets[4] =
+    {
+        float2(-texelSize.x, 0),
+        float2(texelSize.x, 0),
+        float2(0, -texelSize.y),
+        float2(0, texelSize.y)
+    };
+    
+    float depthThreshold = gOutlineThresholds.x;
+    float normalThreshold = gOutlineThresholds.y;
+    
+    for (int i = 0; i < 4; ++i)
+    {
+        float2 neighborUV = uv + offsets[i];
+        float neighborDepth = gDepth.Sample(gSamPoint, neighborUV).r;
+        float3 neighborNormal = gNormal.Sample(gSamPoint, neighborUV).rgb * 2.0f - 1.0f;
+        
+        float depthDelta = abs(centerDepth - neighborDepth);
+        float normalDelta = length(centerNormal - neighborNormal);
+        
+        if (depthDelta > depthThreshold || normalDelta > normalThreshold)
+            return true;
+    }
+    return false;
+}
+
 float4 PSLighting(VSOut pin) : SV_Target
 {
     float depth = gDepth.Sample(gSamPoint, pin.UV).r;
     
-    if(depth >= 1.0f)
+    if (depth >= 1.0f)
         discard;
 
     float3 worldPos = WorldPosFromDepth(pin.UV, depth);
@@ -215,6 +271,57 @@ float4 PSLighting(VSOut pin) : SV_Target
     
     for (int s = 0; s < gNumSpotLights; ++s)
         color += CalcSpot(gSpotLights[s], worldPos, N, V, albedo);
+    
+    // обводка
+    float2 texelSize = 1.0f / float2(1920, 1080);
+    
+    float centerDepth = depth;
+    float3 centerNormal = N;
+    
+    bool isEdge = IsEdge(pin.UV, centerDepth, centerNormal, texelSize);
+    
+    float outlineStrength = gOutlineThresholds.z;
+    float3 outlineColor = gOutlineColor.rgb;
+    
+    if (isEdge)
+    {
+        color = lerp(color, outlineColor, outlineStrength);
+    }
+    
+    // VCR
+    float2 uv = pin.UV;
+    float time = gVCRTimeParams.x;
+    
+    float jitterAmount = gVCRParams.w;
+    uv = JitterOffset(uv, jitterAmount);
+    
+    float abber = gVCRParams.x;
+    float r = gAlbedo.Sample(gSamPoint, uv + float2(abber, 0)).r;
+    float g_channel = gAlbedo.Sample(gSamPoint, uv).g;
+    float b = gAlbedo.Sample(gSamPoint, uv - float2(abber, 0)).b;
+    float3 abberColor = float3(r, g_channel, b);
+    
+    float noiseIntensity = gVCRParams.z;
+    float noise = Random(uv + floor(time * 10.0)) * noiseIntensity;
+    
+    float scanIntensity = gVCRParams.y;
+    float scanline = ScanlineEffect(uv, scanIntensity);
+    
+    float3 finalColor = color;
+    finalColor = lerp(finalColor, abberColor, 0.6);
+    finalColor += noise;
+    finalColor *= scanline;
+    
+    // виньетка
+    float2 centered = pin.UV * 2.0 - 1.0;
+    float vignetteDist = length(centered);
+    float inner = gVignetteParams.z;
+    float vigIntensity = gVignetteParams.x;
+    float vigPower = gVignetteParams.y;
+    float vignette = saturate((vignetteDist - inner) / (1.0 - inner));
+    vignette = pow(vignette, vigPower) * vigIntensity;
+    vignette = 1.0 - vignette;
+    finalColor *= vignette;
 
-    return float4(color, 1.0f);
+    return float4(finalColor, 1.0f);
 }
