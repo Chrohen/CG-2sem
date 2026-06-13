@@ -131,7 +131,7 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 	}
 
 	{
-		const UINT kLightingTextureCount = 4;
+		const UINT kLightingTextureCount = 8;
 
 		D3D12_DESCRIPTOR_RANGE srvRange = {};
 		srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -152,7 +152,7 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 		params[1].DescriptorTable.pDescriptorRanges = &srvRange;
 		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-		D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
+		D3D12_STATIC_SAMPLER_DESC samplers[3] = {};
 
 		samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
 		samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -181,6 +181,20 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 		samplers[1].ShaderRegister = 1;
 		samplers[1].RegisterSpace = 0;
 		samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		samplers[2].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+		samplers[2].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplers[2].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplers[2].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplers[2].MipLODBias = 0.0f;
+		samplers[2].MaxAnisotropy = 1;
+		samplers[2].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		samplers[2].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+		samplers[2].MinLOD = 0.0f;
+		samplers[2].MaxLOD = D3D12_FLOAT32_MAX;
+		samplers[2].ShaderRegister = 2;
+		samplers[2].RegisterSpace = 0;
+		samplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 		D3D12_ROOT_SIGNATURE_DESC desc = {};
 		desc.NumParameters = _countof(params);
@@ -407,6 +421,7 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.NumRenderTargets = Gbuffer::kTargetCount;
 		psoDesc.RTVFormats[0] = Gbuffer::kAlbedoFormat;
 		psoDesc.RTVFormats[1] = Gbuffer::kNormalFormat;
+		psoDesc.RTVFormats[2] = Gbuffer::kMRFormat;
 		psoDesc.DSVFormat = depthStencilFormat;
 		psoDesc.SampleDesc.Count = 1;
 		psoDesc.SampleDesc.Quality = 0;
@@ -539,6 +554,7 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.NumRenderTargets = Gbuffer::kTargetCount;
 		psoDesc.RTVFormats[0] = Gbuffer::kAlbedoFormat;
 		psoDesc.RTVFormats[1] = Gbuffer::kNormalFormat;
+		psoDesc.RTVFormats[2] = Gbuffer::kMRFormat;
 		psoDesc.DSVFormat = depthStencilFormat;
 		psoDesc.SampleDesc.Count = 1;
 		psoDesc.SampleDesc.Quality = 0;
@@ -598,6 +614,7 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.NumRenderTargets = Gbuffer::kTargetCount;
 		psoDesc.RTVFormats[0] = Gbuffer::kAlbedoFormat;
 		psoDesc.RTVFormats[1] = Gbuffer::kNormalFormat;
+		psoDesc.RTVFormats[2] = Gbuffer::kMRFormat;
 		psoDesc.DSVFormat = depthStencilFormat;
 		psoDesc.SampleDesc.Count = 1;
 		psoDesc.SampleDesc.Quality = 0;
@@ -638,6 +655,7 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.NumRenderTargets = Gbuffer::kTargetCount;
 		psoDesc.RTVFormats[0] = Gbuffer::kAlbedoFormat;
 		psoDesc.RTVFormats[1] = Gbuffer::kNormalFormat;
+		psoDesc.RTVFormats[2] = Gbuffer::kMRFormat;
 		psoDesc.DSVFormat = depthStencilFormat;
 		psoDesc.SampleDesc.Count = 1;
 		psoDesc.SampleDesc.Quality = 0;

@@ -6,9 +6,10 @@
 
 class Gbuffer {
 public:
-	static constexpr UINT kTargetCount = 2;
+	static constexpr UINT kTargetCount = 3;
 	static constexpr DXGI_FORMAT kAlbedoFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 	static constexpr DXGI_FORMAT kNormalFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	static constexpr DXGI_FORMAT kMRFormat = DXGI_FORMAT_R16G16_UNORM;
 
 	void Resize(ID3D12Device* device, UINT width, UINT height, UINT rtvDescriptorSize);
 	void CreateSrvDescriptors(ID3D12Device* device, D3D12_CPU_DESCRIPTOR_HANDLE srvStart, UINT descriptorSize) const;
@@ -21,6 +22,10 @@ public:
 
 	bool IsValid() const { return m_targets[0] != nullptr; }
 
+public:
+	ID3D12Resource* GetAlbedoTexture() const { return m_targets[0].Get(); }
+	ID3D12Resource* GetNormalTexture() const { return m_targets[1].Get(); }
+	ID3D12Resource* GetMRTexture()   const { return m_targets[2].Get(); }
 private:
 	void EnsureRtvHeap(ID3D12Device* device, UINT rtvDescriptorSize);
 	D3D12_CPU_DESCRIPTOR_HANDLE RtvHandle(UINT index) const;

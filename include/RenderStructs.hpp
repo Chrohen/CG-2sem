@@ -60,15 +60,18 @@ struct alignas(16) MaterialConstants {
 
 	DirectX::XMFLOAT2 UVSpeed = { 0,0 };
 	int  DiffuseTexIndex = 0;
-	float _pad0 = 0.0f;
+	int  MetalnessTexIndex = -1;
+	int  RoughnessTexIndex = -1;
+	int  DisplacementTexIndex = -1;
 
-	int   DisplacementTexIndex = -1;
 	float DisplacementScale = 0.0f;
 	float DisplacementBias = 0.0f;
-
 	int   NormalTexIndex = -1;
+	float Metalness = 0.0f;
+	float Roughness = 0.5f;
+	float AmbientOcclusion = 1.0f;
+	float _padding[2] = { 0,0 };
 };
-
 
 static constexpr int kMaxDirLights = 4;
 static constexpr int kMaxPointLights = 1024;
@@ -148,7 +151,7 @@ struct alignas(16) BillboardConstants {
 
 static_assert(sizeof(ObjectConstants) % 16 == 0, "ObjectConstants must be 16-byte aligned sized.");
 static_assert(sizeof(PassConstants) % 16 == 0, "PassConstants must be 16-byte aligned sized.");
-static_assert(sizeof(MaterialConstants) == 64, "MaterialConstants size must be 64 bytes (match HLSL cbuffer)");
+static_assert(sizeof(MaterialConstants) == 96, "MaterialConstants size must be 64 bytes (match HLSL cbuffer)");
 static_assert(alignof(MaterialConstants) == 16, "MaterialConstants must be 16-byte aligned");
 static_assert(sizeof(LightingConstants) % 16 == 0, "LightingConstants must be 16-byte aligned sized.");
 

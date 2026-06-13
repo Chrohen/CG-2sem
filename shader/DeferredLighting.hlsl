@@ -57,11 +57,67 @@ cbuffer LightingCB : register(b0)
 
 Texture2D gAlbedo : register(t0); 
 Texture2D gNormal : register(t1); 
-Texture2D gDepth : register(t2);
-Texture2DArray gShadowMap : register(t3);
+Texture2D gMR : register(t2);
+Texture2D gDepth : register(t3);
+Texture2DArray gShadowMap : register(t4);
+TextureCube gIrradianceMap : register(t5);
+TextureCube gPrefilteredEnvMap : register(t6);
+Texture2D gBrdfLUT : register(t7);
 
 SamplerState gSamPoint : register(s0);
 SamplerComparisonState gShadowSampler : register(s1);
+SamplerState gSamLinear : register(s2);
+
+// PBR
+float D_GGX(float NdotH, float roughness)
+{
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denom = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
+    return a2 / (3.14159265f * denom * denom);
+}
+
+float G_SchlickGGX(float NdotV, float roughness)
+{
+    float k = (roughness + 1.0f) * (roughness + 1.0f) / 8.0f;
+    return NdotV / (NdotV * (1.0f - k) + k);
+}
+
+float G_Smith(float NdotV, float NdotL, float roughness)
+{
+    return G_SchlickGGX(NdotV, roughness) * G_SchlickGGX(NdotL, roughness);
+}
+
+float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
+{
+    return F0 + (max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), F0) - F0) * pow(max(1.0 - cosTheta, 0.0), 5.0);
+}
+
+float3 F_Schlick(float3 F0, float VdotH)
+{
+    return F0 + (1.0f - F0) * pow(1.0f - VdotH, 5.0f);
+}
+
+float3 PBR_BSDF(float3 albedo, float metalness, float roughness, float3 N, float3 V, float3 L)
+{
+    float3 H = normalize(L + V);
+    float NdotL = saturate(dot(N, L));
+    float NdotV = saturate(dot(N, V));
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
+
+    float3 F0 = lerp(0.04f, albedo, metalness);
+    float3 F = F_Schlick(F0, VdotH);
+    float D = D_GGX(NdotH, roughness);
+    float G = G_Smith(NdotV, NdotL, roughness);
+
+    float3 specular = D * F * G / (4.0f * NdotV * NdotL + 0.001f);
+
+    float3 kD = (1.0f - F) * (1.0f - metalness);
+    float3 diffuse = kD * albedo / 3.14159265f;
+
+    return (diffuse + specular) * NdotL;
+}
 
 float3 WorldPosFromDepth(float2 uv, float depth)
 {
@@ -110,6 +166,54 @@ float CalcShadow(float3 worldPos)
     return shadow / 9.0f;
 }
 
+float Attenuate(float dist, float range)
+{
+    float ratio = saturate(dist / range);
+    return saturate(1.0f - ratio * ratio) / (dist * dist + 0.0001f);
+}
+
+float SpotFactor(float3 L, float3 lightDir, float innerCos, float outerCos)
+{
+    float cosAngle = dot(-L, normalize(lightDir));
+    return smoothstep(outerCos, innerCos, cosAngle);
+}
+
+float3 CalcPointLightPBR(PointLight light, float3 P, float3 N, float3 V, float3 albedo, float metalness, float roughness)
+{
+    float3 toLight = light.Position - P;
+    float dist = length(toLight);
+    if (dist > light.Range)
+        return float3(0, 0, 0);
+    float3 L = toLight / dist;
+    float att = Attenuate(dist, light.Range);
+    float3 radiance = light.Color * light.Intensity * att;
+    return PBR_BSDF(albedo, metalness, roughness, N, V, L) * radiance;
+}
+
+float3 CalcSpotLightPBR(SpotLight light, float3 P, float3 N, float3 V, float3 albedo, float metalness, float roughness)
+{
+    float3 toLight = light.Position - P;
+    float dist = length(toLight);
+    if (dist > light.Range)
+        return float3(0, 0, 0);
+    float3 L = toLight / dist;
+    float spot = SpotFactor(L, light.Direction, light.InnerCosAngle, light.OuterCosAngle);
+    if (spot <= 0)
+        return float3(0, 0, 0);
+    float att = Attenuate(dist, light.Range) * spot;
+    float3 radiance = light.Color * light.Intensity * att;
+    return PBR_BSDF(albedo, metalness, roughness, N, V, L) * radiance;
+}
+
+float3 CalcDirLightPBR(DirectionalLight light, float3 N, float3 V, float3 albedo, float metalness, float roughness, float3 worldPos)
+{
+    float3 L = normalize(-light.Direction);
+    float shadow = CalcShadow(worldPos);
+    float3 radiance = light.Color * light.Intensity * shadow;
+    return PBR_BSDF(albedo, metalness, roughness, N, V, L) * radiance;
+}
+
+
 
 float3 CalcSpecular(float3 N, float3 L, float3 V, float3 color)
 {
@@ -125,12 +229,6 @@ float3 CalcDirectional(DirectionalLight light, float3 N, float3 V, float3 albedo
     float3 diff = light.Color * light.Intensity * albedo * NdotL;
     float3 spec = CalcSpecular(N, L, V, light.Color * light.Intensity) * NdotL;
     return diff + spec;
-}
-
-float Attenuate(float dist, float range)
-{
-    float ratio = saturate(dist / range);
-    return saturate(1.0f - ratio * ratio) * (1.0f / max(dist * dist, 0.0001f));
 }
 
 float3 CalcPoint(PointLight light, float3 P, float3 N, float3 V, float3 albedo)
@@ -253,7 +351,10 @@ float4 PSLighting(VSOut pin) : SV_Target
     
     if (depth >= 1.0f)
         discard;
-
+    
+    float2 mr = gMR.Sample(gSamPoint, pin.UV).rg;
+    float metalness = mr.r;
+    float roughness = mr.g;
     float3 worldPos = WorldPosFromDepth(pin.UV, depth);
     float3 albedo = gAlbedo.Sample(gSamPoint, pin.UV).rgb;
     float3 N = gNormal.Sample(gSamPoint, pin.UV).rgb * 2.0f - 1.0f;
@@ -261,16 +362,46 @@ float4 PSLighting(VSOut pin) : SV_Target
     
     float3 V = normalize(gEyePosW - worldPos);
     
-    float3 color = gAmbient.rgb * albedo;
+    float NdotV = max(dot(N, V), 0.0);
+    float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metalness);
+    float3 F_IBL = FresnelSchlickRoughness(NdotV, F0, roughness);
     
+    float3 kS = F_IBL;
+    float3 kD = 1.0 - kS;
+    kD *= 1.0 - metalness;
+    
+    // Diffuse IBL
+    float3 irradiance = gIrradianceMap.Sample(gSamLinear, N).rgb;
+    float3 diffuseIBL = irradiance * albedo;
+    
+    // Specular IBL
+    const float MAX_REFLECTION_LOD = 4.0;
+    float3 R = reflect(-V, N);
+    float3 prefilteredColor = gPrefilteredEnvMap.SampleLevel(gSamLinear, R, roughness * MAX_REFLECTION_LOD).rgb;
+    float2 brdf = gBrdfLUT.Sample(gSamLinear, float2(NdotV, roughness)).rg;
+    float3 specularIBL = prefilteredColor * (F_IBL * brdf.x + brdf.y);
+    
+    float3 ambient = (kD * diffuseIBL + specularIBL);
+    
+    float3 color = ambient;
+    
+    // Directional lights
     for (int d = 0; d < gNumDirLights; ++d)
-        color += evaluateDirectionalLight(gDirLights[d], N, V, albedo, worldPos);
+    {
+        color += CalcDirLightPBR(gDirLights[d], N, V, albedo, metalness, roughness, worldPos);
+    }
     
+    // Point lights
     for (int p = 0; p < gNumPointLights; ++p)
-        color += CalcPoint(gPointLights[p], worldPos, N, V, albedo);
+    {
+        color += CalcPointLightPBR(gPointLights[p], worldPos, N, V, albedo, metalness, roughness);
+    }
     
+    // Spot lights
     for (int s = 0; s < gNumSpotLights; ++s)
-        color += CalcSpot(gSpotLights[s], worldPos, N, V, albedo);
+    {
+        color += CalcSpotLightPBR(gSpotLights[s], worldPos, N, V, albedo, metalness, roughness);
+    }
     
     // обводка
     float2 texelSize = 1.0f / float2(1920, 1080);

@@ -50,6 +50,7 @@ struct PSOut
 {
     float4 Albedo : SV_Target0;
     float4 Normal : SV_Target1;
+    float2 MR : SV_Target2;
 };
 
 PSOut PS(VSOut pin)
@@ -57,5 +58,6 @@ PSOut PS(VSOut pin)
     PSOut pout;
     pout.Albedo = pin.Color;
     pout.Normal = float4(pin.NormalW * 0.5f + 0.5f, 1.0f);
+    pout.MR = float2(0.0f, 0.5f);
     return pout;
 }

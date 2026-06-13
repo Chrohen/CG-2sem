@@ -27,6 +27,7 @@ DXGI_FORMAT Gbuffer::TargetFormat(UINT index) const
 	switch (index) {
 	case 0: return kAlbedoFormat;
 	case 1: return kNormalFormat;
+	case 2: return kMRFormat;
 	default: return DXGI_FORMAT_UNKNOWN;
 	}
 }
@@ -73,6 +74,11 @@ void Gbuffer::Resize(ID3D12Device* device, UINT width, UINT height, UINT rtvDesc
 			clearValue.Color[0] = 0.0f;
 			clearValue.Color[1] = 0.0f;
 			clearValue.Color[2] = 1.0f;
+			clearValue.Color[3] = 0.0f;
+		} else if (i == 2) {
+			clearValue.Color[0] = 0.0f;
+			clearValue.Color[1] = 0.5f;
+			clearValue.Color[2] = 0.0f;
 			clearValue.Color[3] = 0.0f;
 		}
 		else {
@@ -181,7 +187,8 @@ void Gbuffer::Clear(ID3D12GraphicsCommandList* commandList) const
 	static const float kClearColors[kTargetCount][4] =
 	{
 		{ 0.0f, 0.0f, 0.0f, 0.0f },
-		{ 0.0f, 0.0f, 1.0f, 0.0f }
+		{ 0.0f, 0.0f, 1.0f, 0.0f },
+		{ 0.0f, 0.5f, 0.0f, 0.0f }
 	};
 
 	for (UINT i = 0; i < kTargetCount; ++i) {
@@ -193,7 +200,8 @@ void Gbuffer::BindAsRenderTargets(ID3D12GraphicsCommandList* commandList, D3D12_
 {
 	std::array<D3D12_CPU_DESCRIPTOR_HANDLE, kTargetCount> rtvs = {
 		RtvHandle(0),
-		RtvHandle(1)
+		RtvHandle(1),
+		RtvHandle(2)
 	};
 
 	commandList->OMSetRenderTargets(

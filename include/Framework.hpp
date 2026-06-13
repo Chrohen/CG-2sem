@@ -40,6 +40,28 @@ struct BillboardInstance {
 	DirectX::XMFLOAT4 Color;
 };
 
+struct DrawRange {
+	UINT startVertex;
+	UINT vertexCount;
+	int  materialId;
+};
+
+struct ObjMeshData {
+	ComPtr<ID3D12Resource> vertexBuffer;
+	D3D12_VERTEX_BUFFER_VIEW vbv;
+	UINT vertexCount = 0;
+	std::vector<DrawRange> drawRanges;
+	std::vector<std::unique_ptr<UploadBuffer<MaterialConstants>>> materialCBs;
+	std::vector<int> matTexIndex;
+	std::unique_ptr<UploadBuffer<ObjectConstants>>   objectCB;
+	DirectX::XMFLOAT3 modelCenter;
+	float modelScale = 1.0f;
+	std::vector<int> matRoughnessIndex;
+	std::vector<int> matMetalnessIndex;
+	std::vector<int> matNormalIndex;
+	std::vector<int> matDisplacementIndex;
+};
+
 class Framework : public IWindowMessageHandler {
 public:
 	explicit Framework(int width, int height, const wchar_t* title);
@@ -140,11 +162,7 @@ private:
 	std::vector<std::unique_ptr<UploadBuffer<MaterialConstants>>> m_materialCBs;
 	std::vector<int> m_matTexIndex;
 
-	struct DrawRange {
-		UINT startVertex;
-		UINT vertexCount;
-		int  materialId;
-	};
+	
 	std::vector<DrawRange> m_drawRanges;
 
 	ComPtr<ID3D12Resource>   m_modelVB;
@@ -290,6 +308,21 @@ private:
 	void ComputeCascades(const DirectX::XMMATRIX& viewProj);
 	DirectX::XMMATRIX GetLightViewProj(const CascadeFrustum& cascade, const DirectionalLight& light) const;
 	void RenderShadowPass();
+
+	bool m_postprocess = false;
+
+	// ---------------------------
+	std::vector<ObjMeshData> m_objMeshes;
+	ObjMeshData LoadSingleObj(const std::wstring& objPathW, UINT texGlobalOffset);
+
+	ComPtr<ID3D12Resource> m_irradianceMap;
+	ComPtr<ID3D12Resource> m_prefilteredMap;
+	ComPtr<ID3D12Resource> m_brdfLUT;
+
+	ComPtr<ID3D12Resource> m_irradianceMapUpload;
+	ComPtr<ID3D12Resource> m_prefilteredMapUpload;
+	ComPtr<ID3D12Resource> m_brdfLUTUpload;
+	void LoadDDSTextures();
 };
 
 #endif // FRAMEWORK_HPP

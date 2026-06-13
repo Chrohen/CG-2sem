@@ -21,6 +21,10 @@
 #include <d3d12sdklayers.h>
 #endif
 
+#include <DirectXTex.h>
+#include <DDSTextureLoader.h>
+#include <ResourceUploadBatch.h>
+
 using namespace DirectX;
 
 static constexpr float NEAR_Z = 0.1f;
@@ -67,6 +71,7 @@ bool Framework::Init()
 	GenerateCubes(500);
 	BuildOctree();
 	m_octreeCB = std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true);
+	LoadDDSTextures();
 	BuildObjVB_Upload();
 	InitFallingLights();
 	BuildWaterPlane();
@@ -174,6 +179,10 @@ LRESULT Framework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		}
 		if (wParam == 'B') {
 			m_billboardEnabled = !m_billboardEnabled;
+			return 0;
+		}
+		if (wParam == 'P') {
+			m_postprocess = !m_postprocess;
 			return 0;
 		}
 		m_keyDown[static_cast<uint8_t>(wParam)] = true;
@@ -435,28 +444,32 @@ void Framework::Update(const double& dt)
 		XMStoreFloat4x4(&lc.ShadowViewProj[i], XMLoadFloat4x4(&pass.ShadowViewProj[i]));
 	lc.ShadowCascadeSplits = pass.ShadowCascadeSplits;
 
-	lc.gVignetteParams = XMFLOAT4(0.6f, 1.5f, 0.8f, 0.0f);
-	// x = intensity
-	// y = power
-	// z = inner radius
 
-	// VCR effect settings
-	lc.gVCRParams = XMFLOAT4(0.02f, 0.25f, 0.15f, 0.01f);
-	// x = chromatic aberration
-	// y = scanline intensity
-	// z = static noise intensity
-	// w = jitter amount
-	lc.gVCRTimeParams = XMFLOAT4(static_cast<float>(m_timer.TotalTime()), 2.0f, 3.5f, 0.0f);
-	// x = global time
-	// y = scanline scroll speed
-	// z = jitter speed
+	if (m_postprocess)
+	{
+		lc.gVignetteParams = XMFLOAT4(0.6f, 1.5f, 0.8f, 0.0f);
+		// x = intensity
+		// y = power
+		// z = inner radius
 
-	// Outline settings
-	lc.gOutlineColor = XMFLOAT4(1.0f, 0.2f, 0.2f, 1.0f);
-	lc.gOutlineThresholds = XMFLOAT4(0.05f, 0.25f, 0.8f, 0.0f);
-	// x = depthThreshold
-	// y = normalThreshold
-	// z = outlineStrength
+		// VCR effect settings
+		lc.gVCRParams = XMFLOAT4(0.02f, 0.25f, 0.15f, 0.01f);
+		// x = chromatic aberration
+		// y = scanline intensity
+		// z = static noise intensity
+		// w = jitter amount
+		lc.gVCRTimeParams = XMFLOAT4(static_cast<float>(m_timer.TotalTime()), 2.0f, 3.5f, 0.0f);
+		// x = global time
+		// y = scanline scroll speed
+		// z = jitter speed
+
+		// Outline settings
+		lc.gOutlineColor = XMFLOAT4(1.0f, 0.2f, 0.2f, 1.0f);
+		lc.gOutlineThresholds = XMFLOAT4(0.05f, 0.25f, 0.8f, 0.0f);
+		// x = depthThreshold
+		// y = normalThreshold
+		// z = outlineStrength
+	}
 
 	m_passCB->CopyData(0, pass);
 	m_lightingCB->CopyData(0, lc);
@@ -492,11 +505,17 @@ void Framework::Draw()
 
 		m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-		if (m_modelVB && m_modelVertexCount > 0)
+		if (!m_objMeshes.empty())
 		{
-			m_commandList->IASetVertexBuffers(0, 1, &m_modelVBV);
-			for (const auto& range : m_drawRanges)
-				m_commandList->DrawInstanced(range.vertexCount, 1, range.startVertex, 0);
+			for (const auto& objMesh : m_objMeshes)
+			{
+				if (!objMesh.vertexBuffer || objMesh.vertexCount == 0) continue;
+				m_commandList->SetGraphicsRootConstantBufferView(
+					0, objMesh.objectCB->Resource()->GetGPUVirtualAddress());
+				m_commandList->IASetVertexBuffers(0, 1, &objMesh.vbv);
+				for (const auto& range : objMesh.drawRanges)
+					m_commandList->DrawInstanced(range.vertexCount, 1, range.startVertex, 0);
+			}
 		}
 		else
 		{
@@ -559,27 +578,35 @@ void Framework::Draw()
 		D3D12_GPU_VIRTUAL_ADDRESS cbAddress = shadowPassGpuBase + cascade * shadowPassCbvSize;
 		m_commandList->SetGraphicsRootConstantBufferView(1, cbAddress);
 
-		if (m_modelVB && m_modelVertexCount > 0)
+		if (!m_objMeshes.empty())
 		{
-			m_commandList->IASetVertexBuffers(0, 1, &m_modelVBV);
 			m_commandList->IASetIndexBuffer(nullptr);
-
-			m_commandList->SetGraphicsRootConstantBufferView(0, m_objectCB->Resource()->GetGPUVirtualAddress());
-
-			for (const auto& range : m_drawRanges)
+			for (const auto& objMesh : m_objMeshes)
 			{
-				int matId = range.materialId;
-				if (matId < 0 || matId >= (int)m_materialCBs.size())
-					matId = 0;
+				if (!objMesh.vertexBuffer || objMesh.vertexCount == 0) continue;
+				m_commandList->IASetVertexBuffers(0, 1, &objMesh.vbv);
+				m_commandList->SetGraphicsRootConstantBufferView(
+					0, objMesh.objectCB->Resource()->GetGPUVirtualAddress());
 
-				int texIndex = m_matTexIndex[matId];
-				if (texIndex < 0) texIndex = 0;
+				for (const auto& range : objMesh.drawRanges)
+				{
+					int matId = range.materialId;
+					if (matId < 0 || matId >= (int)objMesh.materialCBs.size())
+						matId = 0;
 
-				D3D12_GPU_DESCRIPTOR_HANDLE texHandle = m_srvHeap->GetGPUDescriptorHandleForHeapStart();
-				texHandle.ptr += texIndex * m_cbvSrvUavDescriptorSize;
-				m_commandList->SetGraphicsRootDescriptorTable(2, texHandle);
+					MaterialConstants tempMC{};
+					int texIndex = 0;
+					if (matId >= 0 && matId < (int)objMesh.matTexIndex.size()) {
+						texIndex = objMesh.matTexIndex[matId];
+						if (texIndex < 0) texIndex = 0;
+					}
 
-				m_commandList->DrawInstanced(range.vertexCount, 1, range.startVertex, 0);
+					D3D12_GPU_DESCRIPTOR_HANDLE texHandle = m_srvHeap->GetGPUDescriptorHandleForHeapStart();
+					texHandle.ptr += (SIZE_T)(texIndex * m_cbvSrvUavDescriptorSize);
+					m_commandList->SetGraphicsRootDescriptorTable(2, texHandle);
+
+					m_commandList->DrawInstanced(range.vertexCount, 1, range.startVertex, 0);
+				}
 			}
 		}
 
@@ -639,25 +666,34 @@ void Framework::Draw()
 	}
 
 	m_commandList->SetGraphicsRootConstantBufferView(
-		0, m_objectCB->Resource()->GetGPUVirtualAddress());
-	m_commandList->SetGraphicsRootConstantBufferView(
 		1, m_passCB->Resource()->GetGPUVirtualAddress());
 
-	if (m_modelVB && m_modelVertexCount > 0)
+	if (!m_objMeshes.empty())
 	{
-		m_commandList->IASetVertexBuffers(0, 1, &m_modelVBV);
-		for (const auto& range : m_drawRanges)
+		for (const auto& objMesh : m_objMeshes)
 		{
-			int safeId = range.materialId;
-			if (safeId < 0 || safeId >= (int)m_materialCBs.size())
-				safeId = 0;
+			if (!objMesh.vertexBuffer || objMesh.vertexCount == 0) continue;
+
 			m_commandList->SetGraphicsRootConstantBufferView(
-				2, m_materialCBs[safeId]->Resource()->GetGPUVirtualAddress());
-			m_commandList->DrawInstanced(range.vertexCount, 1, range.startVertex, 0);
+				0, objMesh.objectCB->Resource()->GetGPUVirtualAddress());
+
+			m_commandList->IASetVertexBuffers(0, 1, &objMesh.vbv);
+
+			for (const auto& range : objMesh.drawRanges)
+			{
+				int safeId = range.materialId;
+				if (safeId < 0 || safeId >= (int)objMesh.materialCBs.size())
+					safeId = 0;
+				m_commandList->SetGraphicsRootConstantBufferView(
+					2, objMesh.materialCBs[safeId]->Resource()->GetGPUVirtualAddress());
+				m_commandList->DrawInstanced(range.vertexCount, 1, range.startVertex, 0);
+			}
 		}
 	}
 	else
 	{
+		m_commandList->SetGraphicsRootConstantBufferView(
+			0, m_objectCB->Resource()->GetGPUVirtualAddress());
 		m_commandList->IASetVertexBuffers(0, 1, &m_boxVBView);
 		m_commandList->IASetIndexBuffer(&m_boxIBView);
 		if (!m_materialCBs.empty())
@@ -924,8 +960,7 @@ void Framework::BuildConstantBuffers()
 
 void Framework::BuildGBufferSrvHeap()
 {
-	const UINT numDescriptors = 4;
-
+	const UINT numDescriptors = Gbuffer::kTargetCount + 2 + 3;
 	D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 	desc.NumDescriptors = numDescriptors;
 	desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -934,18 +969,28 @@ void Framework::BuildGBufferSrvHeap()
 
 	D3D12_CPU_DESCRIPTOR_HANDLE handle = m_gbufferSrvHeap->GetCPUDescriptorHandleForHeapStart();
 
-	m_gbuffer.CreateSrvDescriptors(m_device.Get(), handle, m_cbvSrvUavDescriptorSize);
-	handle.ptr += 2 * m_cbvSrvUavDescriptorSize;
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = 1;
+	srvDesc.Texture2D.PlaneSlice = 0;
+	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
 
-	D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc = {};
-	depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	depthSrvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-	depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	depthSrvDesc.Texture2D.MostDetailedMip = 0;
-	depthSrvDesc.Texture2D.MipLevels = 1;
-	depthSrvDesc.Texture2D.PlaneSlice = 0;
-	depthSrvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
-	m_device->CreateShaderResourceView(m_depthStencilBuffer.Get(), &depthSrvDesc, handle);
+	srvDesc.Format = Gbuffer::kAlbedoFormat;
+	m_device->CreateShaderResourceView(m_gbuffer.GetAlbedoTexture(), &srvDesc, handle);
+	handle.ptr += m_cbvSrvUavDescriptorSize;
+
+	srvDesc.Format = Gbuffer::kNormalFormat;
+	m_device->CreateShaderResourceView(m_gbuffer.GetNormalTexture(), &srvDesc, handle);
+	handle.ptr += m_cbvSrvUavDescriptorSize;
+
+	srvDesc.Format = Gbuffer::kMRFormat;
+	m_device->CreateShaderResourceView(m_gbuffer.GetMRTexture(), &srvDesc, handle);
+	handle.ptr += m_cbvSrvUavDescriptorSize;
+
+	srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+	m_device->CreateShaderResourceView(m_depthStencilBuffer.Get(), &srvDesc, handle);
 	handle.ptr += m_cbvSrvUavDescriptorSize;
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC shadowSrvDesc = {};
@@ -959,6 +1004,32 @@ void Framework::BuildGBufferSrvHeap()
 	shadowSrvDesc.Texture2DArray.PlaneSlice = 0;
 	shadowSrvDesc.Texture2DArray.ResourceMinLODClamp = 0.0f;
 	m_device->CreateShaderResourceView(mShadowMap.Get(), &shadowSrvDesc, handle);
+	handle.ptr += m_cbvSrvUavDescriptorSize;
+
+	if (m_irradianceMap && m_prefilteredMap && m_brdfLUT) {
+		D3D12_SHADER_RESOURCE_VIEW_DESC cubeDesc = {};
+		cubeDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		cubeDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+		cubeDesc.TextureCube.MostDetailedMip = 0;
+		cubeDesc.TextureCube.MipLevels = m_irradianceMap->GetDesc().MipLevels;
+		cubeDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+		cubeDesc.Format = m_irradianceMap->GetDesc().Format;
+		m_device->CreateShaderResourceView(m_irradianceMap.Get(), &cubeDesc, handle);
+		handle.ptr += m_cbvSrvUavDescriptorSize;
+
+		cubeDesc.TextureCube.MipLevels = m_prefilteredMap->GetDesc().MipLevels;
+		cubeDesc.Format = m_prefilteredMap->GetDesc().Format;
+		m_device->CreateShaderResourceView(m_prefilteredMap.Get(), &cubeDesc, handle);
+		handle.ptr += m_cbvSrvUavDescriptorSize;
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC lutDesc = {};
+		lutDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		lutDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		lutDesc.Texture2D.MostDetailedMip = 0;
+		lutDesc.Texture2D.MipLevels = 1;
+		lutDesc.Format = m_brdfLUT->GetDesc().Format;
+		m_device->CreateShaderResourceView(m_brdfLUT.Get(), &lutDesc, handle);
+	}
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE Framework::CurrentBackBufferView() const
@@ -1067,21 +1138,28 @@ void Framework::BuildBoxGeometry()
 	m_boxIBUpload.Reset();
 }
 
-void Framework::BuildObjVB_Upload()
+
+ObjMeshData Framework::LoadSingleObj(
+	const std::wstring& objPathW,
+	UINT                texGlobalOffset)
 {
 	using namespace DirectX;
-
-	const std::wstring objPathW = L"assets\\sponza\\sponza.obj";
-
-	auto WideToUtf8 = [](const std::wstring& w) -> std::string {
-		if (w.empty()) return {};
-		int sz = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-		std::string s((sz > 0) ? (sz - 1) : 0, '\0');
-		if (sz > 1) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), sz, nullptr, nullptr);
-		return s;
+	auto ToUtf8 = [](const std::wstring& wstr) -> std::string {
+		if (wstr.empty()) return {};
+		int sz = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+		std::string utf8(sz > 0 ? sz - 1 : 0, '\0');
+		if (sz > 1) WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, utf8.data(), sz, nullptr, nullptr);
+		return utf8;
+		};
+	auto ToWide = [](const std::string& utf8) -> std::wstring {
+		if (utf8.empty()) return {};
+		int sz = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+		std::wstring wstr(sz > 0 ? sz - 1 : 0, L'\0');
+		if (sz > 1) MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, wstr.data(), sz);
+		return wstr;
 		};
 
-	std::string objPath = WideToUtf8(objPathW);
+	std::string objPath = ToUtf8(objPathW);
 	std::string baseDir;
 	{
 		size_t pos = objPath.find_last_of("\\/");
@@ -1099,207 +1177,224 @@ void Framework::BuildObjVB_Upload()
 	if (!warn.empty()) OutputDebugStringA(("[tinyobj warn] " + warn + "\n").c_str());
 	if (!ok)           throw std::runtime_error("tinyobj::LoadObj failed: " + err);
 
-	std::unordered_map<std::string, int> texNameToIndex;
-	m_matTexIndex.resize(materials.size(), -1);
-	std::vector<std::wstring> texPaths;
+	for (size_t mi = 0; mi < materials.size(); ++mi) {
+		const auto& mat = materials[mi];
+		std::string msg = "[MAT " + std::to_string(mi) + "] name=" + mat.name
+			+ "\n  diffuse_texname='" + mat.diffuse_texname + "'"
+			+ "\n  specular_texname='" + mat.specular_texname + "'"
+			+ "\n  reflection_texname='" + mat.reflection_texname + "'"
+			+ "\n  metallic_texname='" + mat.metallic_texname + "'"
+			+ "\n  roughness_texname='" + mat.roughness_texname + "'"
+			+ "\n  metallic=" + std::to_string(mat.metallic)
+			+ " roughness=" + std::to_string(mat.roughness);
+		for (auto& kv : mat.unknown_parameter)
+			msg += "\n  unknown['" + kv.first + "']='" + kv.second + "'";
+		msg += "\n";
+		OutputDebugStringA(msg.c_str());
+	}
+	ObjMeshData mesh;
+
+	std::unordered_map<std::string, int> diffuseNameToIndex;
+	std::vector<std::wstring> diffusePaths;
+
+	std::unordered_map<std::string, int> roughnessNameToIndex;
+	std::vector<std::wstring> roughnessPaths;
+
+	std::unordered_map<std::string, int> metalnessNameToIndex;
+	std::vector<std::wstring> metalnessPaths;
+
+	std::unordered_map<std::string, int> normalNameToIndex;
+	std::vector<std::wstring> normalPaths;
+
+	std::unordered_map<std::string, int> dispNameToIndex;
+	std::vector<std::wstring> dispPaths;
+
+	auto NormalizePath = [](const std::string& path) -> std::string {
+		std::string res = path;
+		for (char& c : res) if (c == '/') c = '\\';
+		return res;
+		};
+
+	mesh.matTexIndex.resize(materials.size(), -1);
+	mesh.matRoughnessIndex.resize(materials.size(), -1);
+	mesh.matMetalnessIndex.resize(materials.size(), -1);
+	mesh.matNormalIndex.resize(materials.size(), -1);
+	mesh.matDisplacementIndex.resize(materials.size(), -1);
 
 	for (size_t mi = 0; mi < materials.size(); ++mi) {
-		const std::string& diffMap = materials[mi].diffuse_texname;
-		if (diffMap.empty()) continue;
-		std::string normName = diffMap;
-		for (char& c : normName) if (c == '/') c = '\\';
-		auto it = texNameToIndex.find(normName);
-		if (it != texNameToIndex.end()) {
-			m_matTexIndex[mi] = it->second;
+		const auto& mat = materials[mi];
+
+		if (!mat.diffuse_texname.empty()) {
+			std::string norm = NormalizePath(mat.diffuse_texname);
+			auto it = diffuseNameToIndex.find(norm);
+			if (it == diffuseNameToIndex.end()) {
+				int idx = (int)diffusePaths.size();
+				diffuseNameToIndex[norm] = idx;
+				diffusePaths.push_back(ToWide(baseDir + norm));
+			}
+			mesh.matTexIndex[mi] = diffuseNameToIndex[norm];
 		}
-		else {
-			int idx = (int)texPaths.size();
-			texNameToIndex[normName] = idx;
-			m_matTexIndex[mi] = idx;
-			std::string fullPath = baseDir + normName;
-			int wsz = MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, nullptr, 0);
-			std::wstring wpath(wsz > 0 ? wsz - 1 : 0, L'\0');
-			MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, wpath.data(), wsz);
-			texPaths.push_back(wpath);
+
+		{
+			std::string name = mat.metallic_texname;
+			if (name.empty()) {
+				auto it = mat.unknown_parameter.find("map_refl");
+				if (it != mat.unknown_parameter.end())
+					name = it->second;
+			}
+			if (!name.empty()) {
+				std::string norm = NormalizePath(name);
+				if (metalnessNameToIndex.find(norm) == metalnessNameToIndex.end()) {
+					metalnessNameToIndex[norm] = (int)metalnessPaths.size();
+					metalnessPaths.push_back(ToWide(baseDir + norm));
+				}
+				mesh.matMetalnessIndex[mi] = metalnessNameToIndex[norm];
+			}
+		}
+
+		{
+			std::string name = mat.roughness_texname;
+			if (name.empty()) name = mat.specular_highlight_texname;
+			if (name.empty()) {
+				auto it = mat.unknown_parameter.find("map_Ns");
+				if (it != mat.unknown_parameter.end())
+					name = it->second;
+			}
+			if (!name.empty()) {
+				std::string norm = NormalizePath(name);
+				if (roughnessNameToIndex.find(norm) == roughnessNameToIndex.end()) {
+					roughnessNameToIndex[norm] = (int)roughnessPaths.size();
+					roughnessPaths.push_back(ToWide(baseDir + norm));
+				}
+				mesh.matRoughnessIndex[mi] = roughnessNameToIndex[norm];
+			}
+		}
+
+		if (!mat.normal_texname.empty()) {
+			std::string norm = NormalizePath(mat.normal_texname);
+			auto it = normalNameToIndex.find(norm);
+			if (it == normalNameToIndex.end()) {
+				int idx = (int)normalPaths.size();
+				normalNameToIndex[norm] = idx;
+				normalPaths.push_back(ToWide(baseDir + norm));
+			}
+			mesh.matNormalIndex[mi] = normalNameToIndex[norm];
+		}
+
+		if (!mat.bump_texname.empty()) {
+			std::string norm = NormalizePath(mat.bump_texname);
+			auto it = dispNameToIndex.find(norm);
+			if (it == dispNameToIndex.end()) {
+				int idx = (int)dispPaths.size();
+				dispNameToIndex[norm] = idx;
+				dispPaths.push_back(ToWide(baseDir + norm));
+			}
+			mesh.matDisplacementIndex[mi] = dispNameToIndex[norm];
 		}
 	}
 
-	std::unordered_map<std::string, int> bumpTexNameToIndex;
-	std::vector<std::wstring> bumpTexPaths;
-	const UINT diffuseCount = (UINT)texPaths.size();
-
-	for (size_t mi = 0; mi < materials.size(); ++mi) {
-		const std::string& bumpMap = materials[mi].bump_texname;
-		if (bumpMap.empty()) continue;
-		std::string normName = bumpMap;
-		for (char& c : normName) if (c == '/') c = '\\';
-		auto it = bumpTexNameToIndex.find(normName);
-		if (it != bumpTexNameToIndex.end()) {
-			continue;
-		}
-		int idx = (int)bumpTexPaths.size();
-		bumpTexNameToIndex[normName] = idx;
-		std::string fullPath = baseDir + normName;
-		int wsz = MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, nullptr, 0);
-		std::wstring wpath(wsz > 0 ? wsz - 1 : 0, L'\0');
-		MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, wpath.data(), wsz);
-		bumpTexPaths.push_back(wpath);
+	UINT diffuseOffset = texGlobalOffset;
+	for (const auto& p : diffusePaths) {
+		m_textures.push_back({});
+		m_textureUploads.push_back({});
+		UINT idx = (UINT)m_textures.size() - 1;
+		m_textures[idx] = LoadTextureFromFile(p, m_textureUploads[idx]);
 	}
 
-	ThrowIfFailed(m_directCmdListAlloc->Reset());
-	ThrowIfFailed(m_commandList->Reset(m_directCmdListAlloc.Get(), nullptr));
-
-	UINT texCount = (UINT)texPaths.size();
-	m_textures.resize(texCount);
-	m_textureUploads.resize(texCount);
-	for (UINT i = 0; i < texCount; ++i)
-		m_textures[i] = LoadTextureFromFile(texPaths[i], m_textureUploads[i]);
-
-	if (texCount == 0) {
-		texCount = 1;
-		m_textures.resize(1);
-		m_textureUploads.resize(1);
-		D3D12_HEAP_PROPERTIES defH = {}; defH.Type = D3D12_HEAP_TYPE_DEFAULT;
-		D3D12_RESOURCE_DESC   td = {}; td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-		td.Width = 1; td.Height = 1; td.DepthOrArraySize = 1; td.MipLevels = 1;
-		td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = 1;
-		ThrowIfFailed(m_device->CreateCommittedResource(&defH, D3D12_HEAP_FLAG_NONE, &td,
-			D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(m_textures[0].GetAddressOf())));
-		D3D12_HEAP_PROPERTIES upH = {}; upH.Type = D3D12_HEAP_TYPE_UPLOAD;
-		D3D12_RESOURCE_DESC   ud = {}; ud.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-		ud.Width = 256; ud.Height = 1; ud.DepthOrArraySize = 1; ud.MipLevels = 1;
-		ud.Format = DXGI_FORMAT_UNKNOWN; ud.SampleDesc.Count = 1; ud.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-		ThrowIfFailed(m_device->CreateCommittedResource(&upH, D3D12_HEAP_FLAG_NONE, &ud,
-			D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(m_textureUploads[0].GetAddressOf())));
-		uint8_t white[4] = { 255,255,255,255 }; void* mp = nullptr;
-		m_textureUploads[0]->Map(0, nullptr, &mp); memcpy(mp, white, 4); m_textureUploads[0]->Unmap(0, nullptr);
-		D3D12_TEXTURE_COPY_LOCATION dst = { m_textures[0].Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,{} };
-		D3D12_TEXTURE_COPY_LOCATION src = {};
-		src.pResource = m_textureUploads[0].Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-		src.PlacedFootprint.Footprint = { DXGI_FORMAT_R8G8B8A8_UNORM,1,1,1,256 };
-		m_commandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-		D3D12_RESOURCE_BARRIER b = {}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		b.Transition = { m_textures[0].Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-			D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE };
-		m_commandList->ResourceBarrier(1, &b);
+	UINT roughnessOffset = diffuseOffset + (UINT)diffusePaths.size();
+	for (const auto& p : roughnessPaths) {
+		m_textures.push_back({});
+		m_textureUploads.push_back({});
+		UINT idx = (UINT)m_textures.size() - 1;
+		m_textures[idx] = LoadTextureFromFile(p, m_textureUploads[idx]);
 	}
 
-	UINT oldTexCount = (UINT)m_textures.size();
-	m_textures.resize(oldTexCount + bumpTexPaths.size());
-	m_textureUploads.resize(m_textures.size());
-	for (UINT i = 0; i < bumpTexPaths.size(); ++i)
-		m_textures[oldTexCount + i] = LoadTextureFromFile(bumpTexPaths[i], m_textureUploads[oldTexCount + i]);
+	UINT metalnessOffset = roughnessOffset + (UINT)roughnessPaths.size();
+	for (const auto& p : metalnessPaths) {
+		m_textures.push_back({});
+		m_textureUploads.push_back({});
+		UINT idx = (UINT)m_textures.size() - 1;
+		m_textures[idx] = LoadTextureFromFile(p, m_textureUploads[idx]);
+	}
 
-	BuildSrvHeap((UINT)m_textures.size());
+	UINT normalOffset = metalnessOffset + (UINT)metalnessPaths.size();
+	for (const auto& p : normalPaths) {
+		m_textures.push_back({});
+		m_textureUploads.push_back({});
+		UINT idx = (UINT)m_textures.size() - 1;
+		m_textures[idx] = LoadTextureFromFile(p, m_textureUploads[idx]);
+	}
+
+	UINT dispOffset = normalOffset + (UINT)normalPaths.size();
+	for (const auto& p : dispPaths) {
+		m_textures.push_back({});
+		m_textureUploads.push_back({});
+		UINT idx = (UINT)m_textures.size() - 1;
+		m_textures[idx] = LoadTextureFromFile(p, m_textureUploads[idx]);
+	}
 
 	if (materials.empty()) {
-		m_materialCBs.push_back(std::make_unique<UploadBuffer<MaterialConstants>>(m_device.Get(), 1, true));
+		auto cb = std::make_unique<UploadBuffer<MaterialConstants>>(m_device.Get(), 1, true);
 		MaterialConstants mc{};
-		mc.DiffuseAlbedo = { 1, 1, 1, 1 };
-		mc.UVScale = { 1, 1 };
-		mc.DiffuseTexIndex = 0;
+		mc.DiffuseAlbedo = { 1,1,1,1 };
+		mc.DiffuseTexIndex = (int)diffuseOffset;
+		mc.RoughnessTexIndex = -1;
+		mc.MetalnessTexIndex = -1;
+		mc.NormalTexIndex = -1;
 		mc.DisplacementTexIndex = -1;
-		mc.DisplacementScale = 0.0f;
-		mc.DisplacementBias = 0.0f;
-		m_materialCBs.back()->CopyData(0, mc);
+		mc.Metalness = 0.0f;
+		mc.Roughness = 0.5f;
+		cb->CopyData(0, mc);
+		mesh.materialCBs.push_back(std::move(cb));
 	}
 	else {
 		for (size_t mi = 0; mi < materials.size(); ++mi) {
-			m_materialCBs.push_back(std::make_unique<UploadBuffer<MaterialConstants>>(m_device.Get(), 1, true));
+			const auto& mat = materials[mi];
+			auto cb = std::make_unique<UploadBuffer<MaterialConstants>>(m_device.Get(), 1, true);
 			MaterialConstants mc{};
-			mc.DiffuseAlbedo = {
-				materials[mi].diffuse[0], materials[mi].diffuse[1],
-				materials[mi].diffuse[2], 1.0f };
+
+			mc.DiffuseAlbedo = { mat.diffuse[0], mat.diffuse[1], mat.diffuse[2], 1.0f };
 			mc.UVScale = { 1,1 };
 			mc.UVOffset = { 0,0 };
 			mc.UVSpeed = { 0,0 };
-			mc.DiffuseTexIndex = (m_matTexIndex[mi] >= 0) ? m_matTexIndex[mi] : 0;
 
-			const std::string& bumpMap = materials[mi].bump_texname;
-			if (!bumpMap.empty()) {
-				std::string normName = bumpMap;
-				for (char& c : normName) if (c == '/') c = '\\';
-				auto it = bumpTexNameToIndex.find(normName);
-				if (it != bumpTexNameToIndex.end()) {
-					mc.DisplacementTexIndex = diffuseCount + it->second;
-					mc.DisplacementScale = 0.05f;
-					mc.DisplacementBias = 0.0f;
-				}
-				else {
-					mc.DisplacementTexIndex = -1;
-					mc.DisplacementScale = 0.0f;
-					mc.DisplacementBias = 0.0f;
-				}
-			}
-			else {
-				mc.DisplacementTexIndex = -1;
-				mc.DisplacementScale = 0.0f;
-				mc.DisplacementBias = 0.0f;
-			}
+			mc.DiffuseTexIndex = (mesh.matTexIndex[mi] >= 0)
+				? (int)(diffuseOffset + mesh.matTexIndex[mi]) : -1;
+			mc.RoughnessTexIndex = (mesh.matRoughnessIndex[mi] >= 0)
+				? (int)(roughnessOffset + mesh.matRoughnessIndex[mi]) : -1;
+			mc.MetalnessTexIndex = (mesh.matMetalnessIndex[mi] >= 0)
+				? (int)(metalnessOffset + mesh.matMetalnessIndex[mi]) : -1;
+			mc.NormalTexIndex = (mesh.matNormalIndex[mi] >= 0)
+				? (int)(normalOffset + mesh.matNormalIndex[mi]) : -1;
+			mc.DisplacementTexIndex = (mesh.matDisplacementIndex[mi] >= 0)
+				? (int)(dispOffset + mesh.matDisplacementIndex[mi]) : -1;
 
-			if (materials[mi].name == "fabric_a" ||
-				materials[mi].name == "fabric_b" ||
-				materials[mi].name == "fabric_c" ||
-				materials[mi].name == "fabric_d" ||
-				materials[mi].name == "fabric_e" ||
-				materials[mi].name == "fabric_f" ||
-				materials[mi].name == "fabric_g")
-			{
+			mc.Metalness = mat.metallic;
+			mc.Roughness = (mat.roughness > 0.0f) ? mat.roughness : 0.5f;
+			mc.AmbientOcclusion = 1.0f;
+
+			mc.DisplacementScale = 0.05f;
+			mc.DisplacementBias = 0.0f;
+
+			if (mat.name == "fabric_a" || mat.name == "fabric_b" ||
+				mat.name == "fabric_c" || mat.name == "fabric_d" ||
+				mat.name == "fabric_e" || mat.name == "fabric_f" ||
+				mat.name == "fabric_g") {
 				mc.UVSpeed = { 0.05f, 0.f };
 			}
-
-			if (materials[mi].name == "bricks") {
+			if (mat.name == "bricks") {
 				mc.UVScale = { 0.2f, 0.2f };
 			}
 
-			std::unordered_map<std::string, int> normalTexNameToIndex;
-			std::vector<std::wstring> normalTexPaths;
-			const UINT bumpOffset = (UINT)m_textures.size();
-
-			for (size_t mi = 0; mi < materials.size(); ++mi) {
-				const std::string& normMap = materials[mi].normal_texname;
-				if (normMap.empty()) continue;
-				std::string normName = normMap;
-				for (char& c : normName) if (c == '/') c = '\\';
-				auto it = normalTexNameToIndex.find(normName);
-				if (it != normalTexNameToIndex.end()) continue;
-				int idx = (int)normalTexPaths.size();
-				normalTexNameToIndex[normName] = idx;
-				std::string fullPath = baseDir + normName;
-				int wsz = MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, nullptr, 0);
-				std::wstring wpath(wsz > 0 ? wsz - 1 : 0, L'\0');
-				MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, wpath.data(), wsz);
-				normalTexPaths.push_back(wpath);
-			}
-
-			UINT oldTexCount3 = (UINT)m_textures.size();
-			m_textures.resize(oldTexCount3 + normalTexPaths.size());
-			m_textureUploads.resize(m_textures.size());
-			for (UINT i = 0; i < normalTexPaths.size(); ++i)
-				m_textures[oldTexCount3 + i] = LoadTextureFromFile(normalTexPaths[i], m_textureUploads[oldTexCount3 + i]);
-			
-			const std::string& normMap = materials[mi].normal_texname;
-			if (!normMap.empty()) {
-				std::string normName = normMap;
-				for (char& c : normName) if (c == '/') c = '\\';
-				auto it = normalTexNameToIndex.find(normName);
-				if (it != normalTexNameToIndex.end())
-					mc.NormalTexIndex = diffuseCount + bumpTexPaths.size() + it->second;
-				else
-					mc.NormalTexIndex = -1;
-			}
-			else {
-				mc.NormalTexIndex = -1;
-			}
-
-			BuildSrvHeap((UINT)m_textures.size());
-
-			m_materialCBs.back()->CopyData(0, mc);
+			cb->CopyData(0, mc);
+			mesh.materialCBs.push_back(std::move(cb));
 		}
 	}
 
 	const bool hasNormals = !attrib.normals.empty();
-	auto ReadPos = [&](int v) -> XMFLOAT3 { return { attrib.vertices[3 * v], attrib.vertices[3 * v + 1], attrib.vertices[3 * v + 2] }; };
+	auto ReadPos = [&](int v) -> XMFLOAT3 {
+		return { attrib.vertices[3 * v], attrib.vertices[3 * v + 1], attrib.vertices[3 * v + 2] };
+		};
 	auto ReadNrm = [&](int n) -> XMFLOAT3 {
 		if (hasNormals && n >= 0) return { attrib.normals[3 * n], attrib.normals[3 * n + 1], attrib.normals[3 * n + 2] };
 		return { 0,1,0 };
@@ -1312,7 +1407,8 @@ void Framework::BuildObjVB_Upload()
 
 	struct FaceVerts { Vertex v[3]; };
 	std::unordered_map<int, std::vector<FaceVerts>> facesByMat;
-	XMFLOAT3 minP = { +FLT_MAX,+FLT_MAX,+FLT_MAX }, maxP = { -FLT_MAX,-FLT_MAX,-FLT_MAX };
+	XMFLOAT3 minP = { +FLT_MAX,+FLT_MAX,+FLT_MAX };
+	XMFLOAT3 maxP = { -FLT_MAX,-FLT_MAX,-FLT_MAX };
 
 	for (const auto& sh : shapes) {
 		size_t off = 0;
@@ -1329,12 +1425,12 @@ void Framework::BuildObjVB_Upload()
 					XMLoadFloat3(&p2) - XMLoadFloat3(&p0)));
 				XMStoreFloat3(&n0, fn); n1 = n0; n2 = n0;
 			}
-			auto Exp = [&](const XMFLOAT3& p) {
-				if (p.x < minP.x)minP.x = p.x; if (p.x > maxP.x)maxP.x = p.x;
-				if (p.y < minP.y)minP.y = p.y; if (p.y > maxP.y)maxP.y = p.y;
-				if (p.z < minP.z)minP.z = p.z; if (p.z > maxP.z)maxP.z = p.z;
+			auto Expand = [&](const XMFLOAT3& p) {
+				if (p.x < minP.x) minP.x = p.x; if (p.x > maxP.x) maxP.x = p.x;
+				if (p.y < minP.y) minP.y = p.y; if (p.y > maxP.y) maxP.y = p.y;
+				if (p.z < minP.z) minP.z = p.z; if (p.z > maxP.z) maxP.z = p.z;
 				};
-			Exp(p0); Exp(p1); Exp(p2);
+			Expand(p0); Expand(p1); Expand(p2);
 			FaceVerts fv3;
 			fv3.v[0] = { p0, n0, ReadTex(i0.texcoord_index), {1,1,1,1} };
 			fv3.v[1] = { p1, n1, ReadTex(i1.texcoord_index), {1,1,1,1} };
@@ -1344,35 +1440,136 @@ void Framework::BuildObjVB_Upload()
 		}
 	}
 
-	std::vector<Vertex> vertices; vertices.reserve(500000);
-	m_drawRanges.clear();
+	std::vector<Vertex> vertices;
+	vertices.reserve(500000);
 	for (auto& kv : facesByMat) {
-		UINT start = (UINT)vertices.size();
-		for (auto& f : kv.second) { vertices.push_back(f.v[0]); vertices.push_back(f.v[1]); vertices.push_back(f.v[2]); }
-		m_drawRanges.push_back({ start, (UINT)(kv.second.size() * 3), kv.first });
+		DrawRange dr;
+		dr.startVertex = (UINT)vertices.size();
+		for (auto& f : kv.second) {
+			vertices.push_back(f.v[0]);
+			vertices.push_back(f.v[1]);
+			vertices.push_back(f.v[2]);
+		}
+		dr.vertexCount = (UINT)(kv.second.size() * 3);
+		dr.materialId = kv.first;
+		mesh.drawRanges.push_back(dr);
 	}
 	if (vertices.empty()) throw std::runtime_error("OBJ loaded but produced 0 vertices.");
 
-	m_modelCenter = { 0.5f * (minP.x + maxP.x), 0.5f * (minP.y + maxP.y), 0.5f * (minP.z + maxP.z) };
+	mesh.modelCenter = { 0.5f * (minP.x + maxP.x), 0.5f * (minP.y + maxP.y), 0.5f * (minP.z + maxP.z) };
 	float dx = maxP.x - minP.x, dy = maxP.y - minP.y, dz = maxP.z - minP.z;
-	float maxDim = dx > dy ? (dx > dz ? dx : dz) : (dy > dz ? dy : dz);
-	m_modelScale = (maxDim > 1e-6f) ? (2.0f / maxDim) : 1.0f;
+	float maxDim = (std::max)({ dx, dy, dz });
+	mesh.modelScale = (maxDim > 1e-6f) ? (2.0f / maxDim) : 1.0f;
 
-	m_modelVertexCount = (UINT)vertices.size();
-	const UINT vbBytes = m_modelVertexCount * sizeof(Vertex);
+	mesh.vertexCount = (UINT)vertices.size();
+	const UINT vbBytes = mesh.vertexCount * sizeof(Vertex);
 	D3D12_HEAP_PROPERTIES upH = {}; upH.Type = D3D12_HEAP_TYPE_UPLOAD;
 	D3D12_RESOURCE_DESC   vd = {}; vd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 	vd.Width = vbBytes; vd.Height = 1; vd.DepthOrArraySize = 1; vd.MipLevels = 1;
 	vd.Format = DXGI_FORMAT_UNKNOWN; vd.SampleDesc.Count = 1; vd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 	ThrowIfFailed(m_device->CreateCommittedResource(&upH, D3D12_HEAP_FLAG_NONE, &vd,
-		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(m_modelVB.GetAddressOf())));
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(mesh.vertexBuffer.GetAddressOf())));
 	void* mp = nullptr;
-	ThrowIfFailed(m_modelVB->Map(0, nullptr, &mp));
+	ThrowIfFailed(mesh.vertexBuffer->Map(0, nullptr, &mp));
 	memcpy(mp, vertices.data(), vbBytes);
-	m_modelVB->Unmap(0, nullptr);
-	m_modelVBV.BufferLocation = m_modelVB->GetGPUVirtualAddress();
-	m_modelVBV.StrideInBytes = sizeof(Vertex);
-	m_modelVBV.SizeInBytes = vbBytes;
+	mesh.vertexBuffer->Unmap(0, nullptr);
+
+	mesh.vbv.BufferLocation = mesh.vertexBuffer->GetGPUVirtualAddress();
+	mesh.vbv.StrideInBytes = sizeof(Vertex);
+	mesh.vbv.SizeInBytes = vbBytes;
+
+	mesh.objectCB = std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true);
+
+	return mesh;
+}
+
+void Framework::LoadDDSTextures()
+{
+	DirectX::ResourceUploadBatch uploadBatch(m_device.Get());
+
+	uploadBatch.Begin();
+
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile(
+		m_device.Get(),
+		uploadBatch,
+		L"assets/ibl/irradiance.dds",
+		m_irradianceMap.GetAddressOf()
+	));
+
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile(
+		m_device.Get(),
+		uploadBatch,
+		L"assets/ibl/prefiltered.dds",
+		m_prefilteredMap.GetAddressOf()
+	));
+
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile(
+		m_device.Get(),
+		uploadBatch,
+		L"assets/ibl/brdf_lut.dds",
+		m_brdfLUT.GetAddressOf()
+	));
+
+	auto uploadResourcesFinished = uploadBatch.End(m_commandQueue.Get());
+
+	uploadResourcesFinished.wait();
+}
+
+void Framework::BuildObjVB_Upload()
+{
+	using namespace DirectX;
+
+	struct ObjEntry {
+		std::wstring path;
+		XMFLOAT3     worldOffset;
+		float        worldScale;
+	};
+
+	const std::vector<ObjEntry> objList = {
+		{ L"assets\\sponza\\sponza.obj",    { 0.0f, 0.0f, 0.0f }, 1.0f },
+		{ L"assets\\root\\root.obj", {0.0f, 0.0f, 5.0f}, 1.0f},
+		{ L"assets\\pistol\\pistol.obj", {0.0f, 0.0f, -5.0f}, 1.0f}
+	};
+
+	ThrowIfFailed(m_directCmdListAlloc->Reset());
+	ThrowIfFailed(m_commandList->Reset(m_directCmdListAlloc.Get(), nullptr));
+
+	m_objMeshes.clear();
+	m_textures.clear();
+	m_textureUploads.clear();
+
+	for (const auto& entry : objList) {
+		UINT texOffset = (UINT)m_textures.size();
+		ObjMeshData mesh = LoadSingleObj(entry.path, texOffset);
+
+		XMMATRIX world =
+			XMMatrixTranslation(-mesh.modelCenter.x, -mesh.modelCenter.y, -mesh.modelCenter.z) *
+			XMMatrixScaling(mesh.modelScale * entry.worldScale,
+				mesh.modelScale * entry.worldScale,
+				mesh.modelScale * entry.worldScale) *
+			XMMatrixTranslation(entry.worldOffset.x,
+				entry.worldOffset.y,
+				entry.worldOffset.z);
+
+		XMMATRIX worldInv = XMMatrixInverse(nullptr, world);
+		ObjectConstants obj{};
+		XMStoreFloat4x4(&obj.World, XMMatrixTranspose(world));
+		XMStoreFloat4x4(&obj.WorldInvTranspose, XMMatrixTranspose(worldInv));
+		mesh.objectCB->CopyData(0, obj);
+
+		m_objMeshes.push_back(std::move(mesh));
+	}
+
+	if (!m_objMeshes.empty()) {
+		m_modelVB = m_objMeshes[0].vertexBuffer;
+		m_modelVBV = m_objMeshes[0].vbv;
+		m_drawRanges = m_objMeshes[0].drawRanges;
+		m_modelVertexCount = m_objMeshes[0].vertexCount;
+		m_modelCenter = m_objMeshes[0].modelCenter;
+		m_modelScale = m_objMeshes[0].modelScale;
+	}
+
+	BuildSrvHeap((UINT)m_textures.size());
 
 	ThrowIfFailed(m_commandList->Close());
 	ID3D12CommandList* cmds[] = { m_commandList.Get() };
@@ -1499,6 +1696,67 @@ ComPtr<ID3D12Resource> Framework::LoadTextureFromFile(
 
 void Framework::BuildSrvHeap(UINT textureCount)
 {
+	if (textureCount == 0)
+	{
+		m_textures.push_back({});
+		m_textureUploads.push_back({});
+		UINT idx = 0;
+
+		D3D12_HEAP_PROPERTIES defH = {}; defH.Type = D3D12_HEAP_TYPE_DEFAULT;
+		D3D12_RESOURCE_DESC td = {};
+		td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		td.Width = 1;
+		td.Height = 1;
+		td.DepthOrArraySize = 1;
+		td.MipLevels = 1;
+		td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		td.SampleDesc.Count = 1;
+		ThrowIfFailed(m_device->CreateCommittedResource(
+			&defH, D3D12_HEAP_FLAG_NONE, &td,
+			D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+			IID_PPV_ARGS(m_textures[idx].GetAddressOf())));
+
+		D3D12_HEAP_PROPERTIES upH = {}; upH.Type = D3D12_HEAP_TYPE_UPLOAD;
+		D3D12_RESOURCE_DESC ud = {};
+		ud.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		ud.Width = 256;
+		ud.Height = 1;
+		ud.DepthOrArraySize = 1;
+		ud.MipLevels = 1;
+		ud.Format = DXGI_FORMAT_UNKNOWN;
+		ud.SampleDesc.Count = 1;
+		ud.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		ThrowIfFailed(m_device->CreateCommittedResource(
+			&upH, D3D12_HEAP_FLAG_NONE, &ud,
+			D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+			IID_PPV_ARGS(m_textureUploads[idx].GetAddressOf())));
+
+		uint8_t white[4] = { 255, 255, 255, 255 };
+		void* mp = nullptr;
+		m_textureUploads[idx]->Map(0, nullptr, &mp);
+		memcpy(mp, white, 4);
+		m_textureUploads[idx]->Unmap(0, nullptr);
+
+		D3D12_TEXTURE_COPY_LOCATION dst = {
+			m_textures[idx].Get(),
+			D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {} };
+		D3D12_TEXTURE_COPY_LOCATION src = {};
+		src.pResource = m_textureUploads[idx].Get();
+		src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+		src.PlacedFootprint.Footprint = { DXGI_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, 256 };
+		m_commandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+		D3D12_RESOURCE_BARRIER b = {};
+		b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		b.Transition = { m_textures[idx].Get(),
+						 D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+						 D3D12_RESOURCE_STATE_COPY_DEST,
+						 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE };
+		m_commandList->ResourceBarrier(1, &b);
+
+		textureCount = 1;
+	}
+
 	D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 	desc.NumDescriptors = textureCount;
 	desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -1507,13 +1765,17 @@ void Framework::BuildSrvHeap(UINT textureCount)
 
 	D3D12_CPU_DESCRIPTOR_HANDLE handle = m_srvHeap->GetCPUDescriptorHandleForHeapStart();
 	for (UINT i = 0; i < textureCount; ++i) {
-		D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
-		sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		sv.Texture2D.MipLevels = 1;
-		if (m_textures[i])
+		if (m_textures[i]) {
+			D3D12_RESOURCE_DESC resDesc = m_textures[i]->GetDesc();
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+			sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			sv.Format = resDesc.Format;
+			sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			sv.Texture2D.MipLevels = resDesc.MipLevels;
+
 			m_device->CreateShaderResourceView(m_textures[i].Get(), &sv, handle);
+		}
 		handle.ptr += m_cbvSrvUavDescriptorSize;
 	}
 }

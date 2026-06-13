@@ -1,0 +1,13 @@
+# Blender 5.0.0 MTL File: 'None'
+# www.blender.org
+
+newmtl 08_-_Default
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 1
+map_Kd Textures/Cerberus_A.jpg
+map_Ns Textures/Cerberus_R.jpg
+map_refl Textures/Cerberus_M.jpg

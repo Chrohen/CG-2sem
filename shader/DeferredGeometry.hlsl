@@ -36,12 +36,17 @@ cbuffer MaterialCB : register(b2)
 
     float2 gUVSpeed;
     int gDiffuseTexIndex;
-    float _pad;
-
+    int gMetalnessTexIndex;
+    int gRoughnessTexIndex;
     int gDisplacementTexIndex;
+
     float gDisplacementScale;
     float gDisplacementBias;
     int gNormalTexIndex;
+    float gMetalness;
+    float gRoughness;
+    float gAO;
+    float _padding[2];
 };
 
 Texture2D gTextures[64] : register(t0);
@@ -211,6 +216,7 @@ struct PSOut
 {
     float4 Albedo : SV_Target0;
     float4 Normal : SV_Target1;
+    float2 MR : SV_Target2;
 };
 
 PSOut PS(VertexOut pin)
@@ -249,15 +255,24 @@ PSOut PS(VertexOut pin)
         float3 sampledNormal = gTextures[gNormalTexIndex].Sample(gSamLinearWrap, uv).rgb;
         sampledNormal = sampledNormal * 2.0f - 1.0f;
         
-        float normalStrength = 0.1f;
+        float normalStrength = 1.0f;
         sampledNormal.xy *= normalStrength;
         sampledNormal = normalize(sampledNormal);
         
         N = normalize(mul(sampledNormal, TBN));
     }
+    
+    float metalness = gMetalness;
+    float roughness = gRoughness;
+    if (gMetalnessTexIndex >= 0)
+        metalness = gTextures[gMetalnessTexIndex].Sample(gSamLinearWrap, uv).r;
+    if (gRoughnessTexIndex >= 0)
+        roughness = gTextures[gRoughnessTexIndex].Sample(gSamLinearWrap, uv).r;
+
 
     PSOut pout;
     pout.Albedo = float4(albedo, gMatDiffuseAlbedo.a * texSample.a);
     pout.Normal = float4(N * 0.5f + 0.5f, 1.0f);
+    pout.MR = float2(metalness, roughness);
     return pout;
 }
