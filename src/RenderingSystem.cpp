@@ -1,7 +1,7 @@
 #include "RenderingSystem.hpp"
 #include "Gbuffer.hpp"
 #include "RenderStructs.hpp"
-
+#include "directx/d3dx12.h"
 namespace {
 
 	ComPtr<ID3D12RootSignature> CreateRootSignature(
@@ -67,6 +67,9 @@ void RenderingSystem::BuildShaders()
 
 	m_billboardVsByteCode = CompileShader(L"shader\\Billboard.hlsl", nullptr, "VS", "vs_5_1");
 	m_billboardPsByteCode = CompileShader(L"shader\\Billboard.hlsl", nullptr, "PS", "ps_5_1");
+
+	m_postProcessVsByteCode = CompileShader(L"shader\\PostProcess.hlsl", nullptr, "VSFullscreen", "vs_5_1");
+	m_postProcessPsByteCode = CompileShader(L"shader\\PostProcess.hlsl", nullptr, "PSPostProcess", "ps_5_1");
 }
 
 void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
@@ -356,6 +359,81 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
 		m_billboardRootSignature = CreateRootSignature(device, desc);
+	}
+
+	// Пост-процессинг
+	{
+		D3D12_DESCRIPTOR_RANGE srvRanges[3] = {};
+		srvRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srvRanges[0].NumDescriptors = 1;
+		srvRanges[0].BaseShaderRegister = 0;
+		srvRanges[0].RegisterSpace = 0;
+		srvRanges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+		srvRanges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srvRanges[1].NumDescriptors = 1;
+		srvRanges[1].BaseShaderRegister = 1;
+		srvRanges[1].RegisterSpace = 0;
+		srvRanges[1].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+		srvRanges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srvRanges[2].NumDescriptors = 1;
+		srvRanges[2].BaseShaderRegister = 2;
+		srvRanges[2].RegisterSpace = 0;
+		srvRanges[2].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+		D3D12_ROOT_PARAMETER params[2] = {};
+		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[0].Descriptor.ShaderRegister = 0;
+		params[0].Descriptor.RegisterSpace = 0;
+		params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[1].DescriptorTable.NumDescriptorRanges = 3;
+		params[1].DescriptorTable.pDescriptorRanges = srvRanges;
+		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
+
+		samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+		samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[0].MipLODBias = 0.0f;
+		samplers[0].MaxAnisotropy = 1;
+		samplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		samplers[0].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+		samplers[0].MinLOD = 0.0f;
+		samplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+		samplers[0].ShaderRegister = 0;
+		samplers[0].RegisterSpace = 0;
+		samplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		samplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+		samplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[1].MipLODBias = 0.0f;
+		samplers[1].MaxAnisotropy = 1;
+		samplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		samplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+		samplers[1].MinLOD = 0.0f;
+		samplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+		samplers[1].ShaderRegister = 1;
+		samplers[1].RegisterSpace = 0;
+		samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		D3D12_ROOT_SIGNATURE_DESC desc = {};
+		desc.NumParameters = _countof(params);
+		desc.pParameters = params;
+		desc.NumStaticSamplers = _countof(samplers);
+		desc.pStaticSamplers = samplers;
+		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
+			D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+			D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+			D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+		m_postProcessRootSignature = CreateRootSignature(device, desc);
 	}
 }
 
@@ -661,5 +739,28 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.SampleDesc.Quality = 0;
 
 		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_billboardPso)));
+	}
+
+	// пост-процессинг
+	{
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+		psoDesc.InputLayout = { nullptr, 0 };             
+		psoDesc.pRootSignature = m_postProcessRootSignature.Get();
+		psoDesc.VS = { m_postProcessVsByteCode->GetBufferPointer(), m_postProcessVsByteCode->GetBufferSize() };
+		psoDesc.PS = { m_postProcessPsByteCode->GetBufferPointer(), m_postProcessPsByteCode->GetBufferSize() };
+		psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+		psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+		psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+		psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+		psoDesc.DepthStencilState.DepthEnable = FALSE;
+		psoDesc.SampleMask = UINT_MAX;
+		psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		psoDesc.NumRenderTargets = 1;
+		psoDesc.RTVFormats[0] = backBufferFormat;
+		psoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+		psoDesc.SampleDesc.Count = 1;
+		psoDesc.SampleDesc.Quality = 0;
+
+		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_postProcessPso)));
 	}
 }

@@ -185,6 +185,7 @@ LRESULT Framework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		}
 		if (wParam == 'P') {
 			m_postprocess = !m_postprocess;
+			OutputDebugStringA(m_postprocess ? "Post-processing ON\n" : "Post-processing OFF\n");
 			return 0;
 		}
 		m_keyDown[static_cast<uint8_t>(wParam)] = true;
@@ -278,6 +279,49 @@ void Framework::OnResize()
 	dsvDesc.Format = dsvFormat;
 	dsvDesc.Texture2D.MipSlice = 0;
 	m_device->CreateDepthStencilView(m_depthStencilBuffer.Get(), &dsvDesc, DepthStencilView());
+
+	if (!mLightingResult || m_clientWidth != (int)mLightingResult->GetDesc().Width || m_clientHeight != (int)mLightingResult->GetDesc().Height)
+	{
+		mLightingResult.Reset();
+		m_lightingRtvHeap.Reset();
+
+		D3D12_RESOURCE_DESC texDesc = {};
+		texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		texDesc.Width = m_clientWidth;
+		texDesc.Height = m_clientHeight;
+		texDesc.DepthOrArraySize = 1;
+		texDesc.MipLevels = 1;
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+		D3D12_CLEAR_VALUE clearValue = {};
+		clearValue.Format = texDesc.Format;
+		clearValue.Color[0] = 0.0f;
+		clearValue.Color[1] = 0.0f;
+		clearValue.Color[2] = 0.0f;
+		clearValue.Color[3] = 1.0f;
+
+		D3D12_HEAP_PROPERTIES heapDefault = {};
+		heapDefault.Type = D3D12_HEAP_TYPE_DEFAULT;
+		ThrowIfFailed(m_device->CreateCommittedResource(
+			&heapDefault, D3D12_HEAP_FLAG_NONE, &texDesc,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
+			IID_PPV_ARGS(&mLightingResult)));
+
+		D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+		rtvHeapDesc.NumDescriptors = 1;
+		rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+		rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+		ThrowIfFailed(m_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_lightingRtvHeap)));
+
+		D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+		rtvDesc.Format = texDesc.Format;
+		rtvDesc.Texture2D.MipSlice = 0;
+		m_device->CreateRenderTargetView(mLightingResult.Get(), &rtvDesc, m_lightingRtvHeap->GetCPUDescriptorHandleForHeapStart());
+	}
 
 	m_gbuffer.Resize(m_device.Get(), m_clientWidth, m_clientHeight, m_rtvDescriptorSize);
 
@@ -447,34 +491,29 @@ void Framework::Update(const double& dt)
 	lc.ShadowCascadeSplits = pass.ShadowCascadeSplits;
 
 
+	PostProcessConstants ppc;
 	if (m_postprocess)
 	{
-		lc.gVignetteParams = XMFLOAT4(0.6f, 1.5f, 0.8f, 0.0f);
-		// x = intensity
-		// y = power
-		// z = inner radius
-
-		// VCR effect settings
-		lc.gVCRParams = XMFLOAT4(0.02f, 0.25f, 0.15f, 0.01f);
-		// x = chromatic aberration
-		// y = scanline intensity
-		// z = static noise intensity
-		// w = jitter amount
-		lc.gVCRTimeParams = XMFLOAT4(static_cast<float>(m_timer.TotalTime()), 2.0f, 3.5f, 0.0f);
-		// x = global time
-		// y = scanline scroll speed
-		// z = jitter speed
-
-		// Outline settings
-		lc.gOutlineColor = XMFLOAT4(1.0f, 0.2f, 0.2f, 1.0f);
-		lc.gOutlineThresholds = XMFLOAT4(0.05f, 0.25f, 0.8f, 0.0f);
-		// x = depthThreshold
-		// y = normalThreshold
-		// z = outlineStrength
+		ppc.VignetteParams = XMFLOAT4(0.6f, 1.5f, 0.8f, 0.0f);;
+		ppc.VCRParams = XMFLOAT4(0.02f, 0.25f, 0.15f, 0.01f);
+		ppc.VCRTimeParams = XMFLOAT4(static_cast<float>(m_timer.TotalTime()), 2.0f, 3.5f, 0.0f);
+		ppc.OutlineColor = XMFLOAT4(1.0f, 0.2f, 0.2f, 1.0f);
+		ppc.OutlineThresholds = XMFLOAT4(0.05f, 0.25f, 0.8f, 0.0f);
+		OutputDebugStringA(("Chromatic = " + std::to_string(lc.gVCRParams.x) + "\n").c_str());
 	}
+	else
+	{
+		ppc.VignetteParams = XMFLOAT4(0.0f, 1.0f, 0.0f, 0.0f);
+		ppc.VCRParams = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+		ppc.VCRTimeParams = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+		ppc.OutlineColor = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+		ppc.OutlineThresholds = XMFLOAT4(100.0f, 100.0f, 0.0f, 0.0f);
+	}
+	ppc.Resolution = XMFLOAT4((float)m_clientWidth, (float)m_clientHeight, 1.0f / m_clientWidth, 1.0f / m_clientHeight);
 
 	m_passCB->CopyData(0, pass);
 	m_lightingCB->CopyData(0, lc);
+	m_postProcessCB->CopyData(0, ppc);
 }
 
 void Framework::Draw()
@@ -732,17 +771,15 @@ void Framework::Draw()
 
 	m_gbuffer.TransitionToShaderResources(m_commandList.Get());
 
-	D3D12_RESOURCE_BARRIER toRT = {};
-	toRT.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	toRT.Transition.pResource = CurrentBackBuffer();
-	toRT.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-	toRT.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	toRT.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	m_commandList->ResourceBarrier(1, &toRT);
+	auto lightingToRT = CD3DX12_RESOURCE_BARRIER::Transition(
+		mLightingResult.Get(),
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		D3D12_RESOURCE_STATE_RENDER_TARGET);
+	m_commandList->ResourceBarrier(1, &lightingToRT);
 
-	D3D12_CPU_DESCRIPTOR_HANDLE rtv = CurrentBackBufferView();
-	m_commandList->OMSetRenderTargets(1, &rtv, TRUE, nullptr);
-	m_commandList->ClearRenderTargetView(rtv, DirectX::Colors::Black, 0, nullptr);
+	D3D12_CPU_DESCRIPTOR_HANDLE lightingRTV = m_lightingRtvHeap->GetCPUDescriptorHandleForHeapStart();
+	m_commandList->OMSetRenderTargets(1, &lightingRTV, FALSE, nullptr);
+	m_commandList->ClearRenderTargetView(lightingRTV, DirectX::Colors::Black, 0, nullptr);
 
 	m_commandList->SetPipelineState(m_renderingSystem.LightingPSO());
 	m_commandList->SetGraphicsRootSignature(m_renderingSystem.LightingRootSignature());
@@ -752,22 +789,43 @@ void Framework::Draw()
 		m_commandList->SetDescriptorHeaps(1, heaps);
 	}
 
-	m_commandList->SetGraphicsRootConstantBufferView(
-		0, m_lightingCB->Resource()->GetGPUVirtualAddress());
+	m_commandList->SetGraphicsRootConstantBufferView(0, m_lightingCB->Resource()->GetGPUVirtualAddress());
+	m_commandList->SetGraphicsRootDescriptorTable(1, m_gbufferSrvHeap->GetGPUDescriptorHandleForHeapStart());
+	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_commandList->DrawInstanced(3, 1, 0, 0);
 
-	m_commandList->SetGraphicsRootDescriptorTable(
-		1, m_gbufferSrvHeap->GetGPUDescriptorHandleForHeapStart());
+	auto lightingToSRV = CD3DX12_RESOURCE_BARRIER::Transition(
+		mLightingResult.Get(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	m_commandList->ResourceBarrier(1, &lightingToSRV);
+
+	auto backToRT = CD3DX12_RESOURCE_BARRIER::Transition(
+		CurrentBackBuffer(),
+		D3D12_RESOURCE_STATE_PRESENT,
+		D3D12_RESOURCE_STATE_RENDER_TARGET);
+	m_commandList->ResourceBarrier(1, &backToRT);
+
+	D3D12_CPU_DESCRIPTOR_HANDLE backRTV = CurrentBackBufferView();
+	m_commandList->OMSetRenderTargets(1, &backRTV, TRUE, nullptr);
+
+	m_commandList->SetPipelineState(m_renderingSystem.PostProcessPSO());
+	m_commandList->SetGraphicsRootSignature(m_renderingSystem.PostProcessRootSignature());
+
+	m_commandList->SetGraphicsRootConstantBufferView(0, m_postProcessCB->Resource()->GetGPUVirtualAddress());
+
+	ID3D12DescriptorHeap* ppHeaps[] = { m_postProcessSrvHeap.Get() };
+	m_commandList->SetDescriptorHeaps(1, ppHeaps);
+	m_commandList->SetGraphicsRootDescriptorTable(1, m_postProcessSrvHeap->GetGPUDescriptorHandleForHeapStart());
 
 	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	m_commandList->DrawInstanced(3, 1, 0, 0);
 
-	D3D12_RESOURCE_BARRIER toPresent = {};
-	toPresent.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	toPresent.Transition.pResource = CurrentBackBuffer();
-	toPresent.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	toPresent.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-	toPresent.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	m_commandList->ResourceBarrier(1, &toPresent);
+	auto backToPresent = CD3DX12_RESOURCE_BARRIER::Transition(
+		CurrentBackBuffer(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET,
+		D3D12_RESOURCE_STATE_PRESENT);
+	m_commandList->ResourceBarrier(1, &backToPresent);
 
 	ThrowIfFailed(m_commandList->Close());
 	ID3D12CommandList* cmdsLists[] = { m_commandList.Get() };
@@ -958,6 +1016,7 @@ void Framework::BuildConstantBuffers()
 	m_objectCB = std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true);
 	m_passCB = std::make_unique<UploadBuffer<PassConstants>>(m_device.Get(), 1, true);
 	m_lightingCB = std::make_unique<UploadBuffer<LightingConstants>>(m_device.Get(), 1, true);
+	m_postProcessCB = std::make_unique<UploadBuffer<PostProcessConstants>>(m_device.Get(), 1, true);
 }
 
 void Framework::BuildGBufferSrvHeap()
@@ -1050,7 +1109,32 @@ void Framework::BuildGBufferSrvHeap()
 		nullDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 		m_device->CreateShaderResourceView(nullptr, &nullDesc, handle);
 	}
+	handle.ptr += m_cbvSrvUavDescriptorSize;
 
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC ppHeapDesc = {};
+		ppHeapDesc.NumDescriptors = 3;
+		ppHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		ppHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+		ThrowIfFailed(m_device->CreateDescriptorHeap(&ppHeapDesc, IID_PPV_ARGS(&m_postProcessSrvHeap)));
+
+		D3D12_CPU_DESCRIPTOR_HANDLE ppHandle = m_postProcessSrvHeap->GetCPUDescriptorHandleForHeapStart();
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC ppSrvDesc = {};
+		ppSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		ppSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		ppSrvDesc.Texture2D.MipLevels = 1;
+		ppSrvDesc.Format = mLightingResult->GetDesc().Format;
+		m_device->CreateShaderResourceView(mLightingResult.Get(), &ppSrvDesc, ppHandle);
+		ppHandle.ptr += m_cbvSrvUavDescriptorSize;
+
+		ppSrvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+		m_device->CreateShaderResourceView(m_depthStencilBuffer.Get(), &ppSrvDesc, ppHandle);
+		ppHandle.ptr += m_cbvSrvUavDescriptorSize;
+
+		ppSrvDesc.Format = Gbuffer::kNormalFormat;
+		m_device->CreateShaderResourceView(m_gbuffer.GetNormalTexture(), &ppSrvDesc, ppHandle);
+	}
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE Framework::CurrentBackBufferView() const

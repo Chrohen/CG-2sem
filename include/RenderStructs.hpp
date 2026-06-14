@@ -141,6 +141,17 @@ struct alignas(16) LightingConstants
 	DirectX::XMFLOAT4 gOutlineThresholds;
 };
 
+struct alignas(16) PostProcessConstants
+{
+	DirectX::XMFLOAT4 VignetteParams;
+	DirectX::XMFLOAT4 VCRParams;
+	DirectX::XMFLOAT4 VCRTimeParams;
+	DirectX::XMFLOAT4 OutlineColor;
+	DirectX::XMFLOAT4 OutlineThresholds;
+	DirectX::XMFLOAT4 Resolution;
+};
+static_assert(sizeof(PostProcessConstants) % 16 == 0, "PostProcessConstants must be 16-byte aligned");
+
 struct alignas(16) BillboardConstants {
 	DirectX::XMFLOAT3 Position;
 	float pad0;

@@ -410,56 +410,6 @@ float4 PSLighting(VSOut pin) : SV_Target
         color += CalcSpotLightPBR(gSpotLights[s], worldPos, N, V, albedo, metalness, roughness);
     }
     
-    // обводка
-    float2 texelSize = 1.0f / float2(1920, 1080);
-    
-    float centerDepth = depth;
-    float3 centerNormal = N;
-    
-    bool isEdge = IsEdge(pin.UV, centerDepth, centerNormal, texelSize);
-    
-    float outlineStrength = gOutlineThresholds.z;
-    float3 outlineColor = gOutlineColor.rgb;
-    
-    if (isEdge)
-    {
-        color = lerp(color, outlineColor, outlineStrength);
-    }
-    
-    // VCR
-    float2 uv = pin.UV;
-    float time = gVCRTimeParams.x;
-    
-    float jitterAmount = gVCRParams.w;
-    uv = JitterOffset(uv, jitterAmount);
-    
-    float abber = gVCRParams.x;
-    float r = gAlbedo.Sample(gSamPoint, uv + float2(abber, 0)).r;
-    float g_channel = gAlbedo.Sample(gSamPoint, uv).g;
-    float b = gAlbedo.Sample(gSamPoint, uv - float2(abber, 0)).b;
-    float3 abberColor = float3(r, g_channel, b);
-    
-    float noiseIntensity = gVCRParams.z;
-    float noise = Random(uv + floor(time * 10.0)) * noiseIntensity;
-    
-    float scanIntensity = gVCRParams.y;
-    float scanline = ScanlineEffect(uv, scanIntensity);
-    
-    float3 finalColor = color;
-    finalColor = lerp(finalColor, abberColor, 0.6);
-    finalColor += noise;
-    finalColor *= scanline;
-    
-    // виньетка
-    float2 centered = pin.UV * 2.0 - 1.0;
-    float vignetteDist = length(centered);
-    float inner = gVignetteParams.z;
-    float vigIntensity = gVignetteParams.x;
-    float vigPower = gVignetteParams.y;
-    float vignette = saturate((vignetteDist - inner) / (1.0 - inner));
-    vignette = pow(vignette, vigPower) * vigIntensity;
-    vignette = 1.0 - vignette;
-    finalColor *= vignette;
-
-    return float4(finalColor, 1.0f);
+   
+    return float4(color, 1.0f);
 }

@@ -29,6 +29,9 @@ public:
 
 	ID3D12RootSignature* BillboardRootSignature() const { return m_billboardRootSignature.Get(); }
 	ID3D12PipelineState* BillboardPSO() const { return m_billboardPso.Get(); }
+
+	ID3D12RootSignature* PostProcessRootSignature() const { return m_postProcessRootSignature.Get(); }
+	ID3D12PipelineState* PostProcessPSO() const { return m_postProcessPso.Get(); }
 private:
 	ComPtr<ID3DBlob> m_geometryVsByteCode;
 	ComPtr<ID3DBlob> m_geometryPsByteCode;
@@ -66,6 +69,12 @@ private:
 	ComPtr<ID3D12PipelineState> m_billboardPso;
 	ComPtr<ID3DBlob> m_billboardVsByteCode;
 	ComPtr<ID3DBlob> m_billboardPsByteCode;
+
+	ComPtr<ID3D12RootSignature> m_postProcessRootSignature;
+	ComPtr<ID3D12PipelineState> m_postProcessPso;
+
+	ComPtr<ID3DBlob> m_postProcessVsByteCode;
+	ComPtr<ID3DBlob> m_postProcessPsByteCode;
 };
 
 #endif // RENDERING_SYSTEM_HPP

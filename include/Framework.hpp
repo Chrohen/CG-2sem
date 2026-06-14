@@ -327,6 +327,11 @@ private:
 	ComPtr<ID3D12Resource> m_prefilteredMapUpload;
 	ComPtr<ID3D12Resource> m_brdfLUTUpload;
 	void LoadDDSTextures();
+
+	ComPtr<ID3D12Resource> mLightingResult;
+	ComPtr<ID3D12DescriptorHeap> m_lightingRtvHeap;
+	ComPtr<ID3D12DescriptorHeap> m_postProcessSrvHeap;
+	std::unique_ptr<UploadBuffer<PostProcessConstants>> m_postProcessCB;
 };
 
 #endif // FRAMEWORK_HPP
