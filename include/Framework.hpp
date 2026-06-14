@@ -309,6 +309,10 @@ private:
 	DirectX::XMMATRIX GetLightViewProj(const CascadeFrustum& cascade, const DirectionalLight& light) const;
 	void RenderShadowPass();
 
+	ComPtr<ID3D12Resource> m_shadowPatternTex;
+	ComPtr<ID3D12Resource> m_shadowPatternUpload;
+	void LoadShadowPatternTexture();
+
 	bool m_postprocess = false;
 
 	// ---------------------------

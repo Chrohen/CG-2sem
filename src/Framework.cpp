@@ -54,6 +54,7 @@ bool Framework::Init()
 {
 	m_window = std::make_unique<Window>(m_initWidth, m_initHeight, m_title, this);
 
+
 	InitDxgi();
 	InitD3D12Device();
 	m_cbvSrvUavDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -65,13 +66,14 @@ bool Framework::Init()
 	m_renderingSystem.BuildShaders();
 	m_renderingSystem.BuildRootSignatures(m_device.Get());
 	m_renderingSystem.BuildPSOs(m_device.Get(), m_backBufferFormat, m_depthStencilFormat);
-
+	
 	BuildConstantBuffers();
 	BuildBoxGeometry();
 	GenerateCubes(500);
 	BuildOctree();
 	m_octreeCB = std::make_unique<UploadBuffer<ObjectConstants>>(m_device.Get(), 1, true);
 	LoadDDSTextures();
+	LoadShadowPatternTexture();
 	BuildObjVB_Upload();
 	InitFallingLights();
 	BuildWaterPlane();
@@ -960,7 +962,7 @@ void Framework::BuildConstantBuffers()
 
 void Framework::BuildGBufferSrvHeap()
 {
-	const UINT numDescriptors = Gbuffer::kTargetCount + 2 + 3;
+	const UINT numDescriptors = Gbuffer::kTargetCount + 2 + 3 + 1;
 	D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 	desc.NumDescriptors = numDescriptors;
 	desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -1030,6 +1032,25 @@ void Framework::BuildGBufferSrvHeap()
 		lutDesc.Format = m_brdfLUT->GetDesc().Format;
 		m_device->CreateShaderResourceView(m_brdfLUT.Get(), &lutDesc, handle);
 	}
+	handle.ptr += m_cbvSrvUavDescriptorSize;
+
+	if (m_shadowPatternTex) {
+		D3D12_SHADER_RESOURCE_VIEW_DESC patDesc = {};
+		patDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		patDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		patDesc.Texture2D.MostDetailedMip = 0;
+		patDesc.Texture2D.MipLevels = m_shadowPatternTex->GetDesc().MipLevels;
+		patDesc.Format = m_shadowPatternTex->GetDesc().Format;
+		m_device->CreateShaderResourceView(m_shadowPatternTex.Get(), &patDesc, handle);
+	}
+	else {
+		D3D12_SHADER_RESOURCE_VIEW_DESC nullDesc = {};
+		nullDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		nullDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		nullDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		m_device->CreateShaderResourceView(nullptr, &nullDesc, handle);
+	}
+
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE Framework::CurrentBackBufferView() const
@@ -2414,4 +2435,24 @@ XMMATRIX Framework::GetLightViewProj(const CascadeFrustum& cascade, const Direct
 
 	XMMATRIX lightProj = XMMatrixOrthographicOffCenterLH(minX, maxX, minY, maxY, minZ, maxZ);
 	return lightView * lightProj;
+}
+
+void Framework::LoadShadowPatternTexture()
+{
+	ThrowIfFailed(m_commandList->Reset(m_directCmdListAlloc.Get(), nullptr));
+
+	m_shadowPatternTex = LoadTextureFromFile(L"assets\\shadowtexture.jpg", m_shadowPatternUpload);
+
+	if (!m_shadowPatternTex)
+	{
+		OutputDebugStringA("ERROR: Failed to load shadowtexture.jpg! Check file path.\n");
+	}
+
+	ThrowIfFailed(m_commandList->Close());
+	ID3D12CommandList* texCmds[] = { m_commandList.Get() };
+	m_commandQueue->ExecuteCommandLists(1, texCmds);
+
+	FlushCommandQueue();
+
+	ThrowIfFailed(m_directCmdListAlloc->Reset());
 }

@@ -131,7 +131,7 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 	}
 
 	{
-		const UINT kLightingTextureCount = 8;
+		const UINT kLightingTextureCount = 9;
 
 		D3D12_DESCRIPTOR_RANGE srvRange = {};
 		srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;

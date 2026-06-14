@@ -63,6 +63,7 @@ Texture2DArray gShadowMap : register(t4);
 TextureCube gIrradianceMap : register(t5);
 TextureCube gPrefilteredEnvMap : register(t6);
 Texture2D gBrdfLUT : register(t7);
+Texture2D gShadowPattern : register(t8);
 
 SamplerState gSamPoint : register(s0);
 SamplerComparisonState gShadowSampler : register(s1);
@@ -209,10 +210,16 @@ float3 CalcDirLightPBR(DirectionalLight light, float3 N, float3 V, float3 albedo
 {
     float3 L = normalize(-light.Direction);
     float shadow = CalcShadow(worldPos);
-    float3 radiance = light.Color * light.Intensity * shadow;
+    
+    float2 shadowUV = worldPos.xz * 0.2f;
+    float3 shadowTexColor = gShadowPattern.Sample(gSamLinear, shadowUV).rgb;
+    
+    float3 shadowModifier = lerp(shadowTexColor, float3(1.0f, 1.0f, 1.0f), shadow);
+
+    float3 radiance = light.Color * light.Intensity * shadowModifier;
+    
     return PBR_BSDF(albedo, metalness, roughness, N, V, L) * radiance;
 }
-
 
 
 float3 CalcSpecular(float3 N, float3 L, float3 V, float3 color)
