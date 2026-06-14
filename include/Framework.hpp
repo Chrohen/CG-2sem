@@ -332,6 +332,8 @@ private:
 	ComPtr<ID3D12DescriptorHeap> m_lightingRtvHeap;
 	ComPtr<ID3D12DescriptorHeap> m_postProcessSrvHeap;
 	std::unique_ptr<UploadBuffer<PostProcessConstants>> m_postProcessCB;
+
+	bool m_useBeckmann = false;
 };
 
 #endif // FRAMEWORK_HPP

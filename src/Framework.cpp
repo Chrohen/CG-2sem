@@ -188,6 +188,11 @@ LRESULT Framework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			OutputDebugStringA(m_postprocess ? "Post-processing ON\n" : "Post-processing OFF\n");
 			return 0;
 		}
+		if (wParam == 'M') {
+			m_useBeckmann = !m_useBeckmann;
+			OutputDebugStringA(m_useBeckmann ? "Beckmann PBR enabled\n" : "GGX PBR enabled\n");
+			return 0;
+		}
 		m_keyDown[static_cast<uint8_t>(wParam)] = true;
 		return 0;
 	case WM_KEYUP: case WM_SYSKEYUP:
@@ -465,6 +470,7 @@ void Framework::Update(const double& dt)
 	lc.SpotLights[0].OuterCosAngle = cosf(XMConvertToRadians(30.0f));
 	lc.SpotLights[0].Color = { 1.0f, 1.0f, 0.8f };
 	lc.SpotLights[0].Intensity = 4.0f;
+	lc.UseBeckmann = m_useBeckmann ? 1 : 0;
 
 	DirectionalLight dirLight;
 	dirLight.Direction = { 0.577f, -0.577f, 0.577f };

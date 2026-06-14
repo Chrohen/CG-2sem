@@ -53,6 +53,9 @@ cbuffer LightingCB : register(b0)
     float4 gVCRTimeParams;
     float4 gOutlineColor;
     float4 gOutlineThresholds;
+    
+    int gUseBeckmann;
+    float3 _pad_beckmann;
 };
 
 Texture2D gAlbedo : register(t0); 
@@ -70,6 +73,20 @@ SamplerComparisonState gShadowSampler : register(s1);
 SamplerState gSamLinear : register(s2);
 
 // PBR
+float D_Beckmann(float NdotH, float roughness)
+{
+    float alpha = roughness * roughness;
+    float alpha2 = alpha * alpha;
+    float NdotH2 = NdotH * NdotH;
+    
+    if (NdotH <= 1e-6 || alpha2 <= 1e-6)
+        return 0.0f;
+    
+    float exponent = (NdotH2 - 1.0f) / (alpha2 * NdotH2);
+    float denom = 3.14159265f * alpha2 * NdotH2 * NdotH2;
+    return exp(exponent) / denom;
+}
+
 float D_GGX(float NdotH, float roughness)
 {
     float a = roughness * roughness;
@@ -77,6 +94,16 @@ float D_GGX(float NdotH, float roughness)
     float denom = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
     return a2 / (3.14159265f * denom * denom);
 }
+
+
+float Distribution(float NdotH, float roughness, int useBeckmann)
+{
+    if (useBeckmann)
+        return D_Beckmann(NdotH, roughness);
+    else
+        return D_GGX(NdotH, roughness);
+}
+
 
 float G_SchlickGGX(float NdotV, float roughness)
 {
@@ -109,7 +136,7 @@ float3 PBR_BSDF(float3 albedo, float metalness, float roughness, float3 N, float
 
     float3 F0 = lerp(0.04f, albedo, metalness);
     float3 F = F_Schlick(F0, VdotH);
-    float D = D_GGX(NdotH, roughness);
+    float D = Distribution(NdotH, roughness, gUseBeckmann);
     float G = G_Smith(NdotV, NdotL, roughness);
 
     float3 specular = D * F * G / (4.0f * NdotV * NdotL + 0.001f);

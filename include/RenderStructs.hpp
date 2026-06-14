@@ -139,6 +139,9 @@ struct alignas(16) LightingConstants
 	
 	DirectX::XMFLOAT4 gOutlineColor;
 	DirectX::XMFLOAT4 gOutlineThresholds;
+
+	int UseBeckmann;
+	float pad1[3];
 };
 
 struct alignas(16) PostProcessConstants
