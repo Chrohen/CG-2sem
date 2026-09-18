@@ -70,6 +70,9 @@ void RenderingSystem::BuildShaders()
 
 	m_postProcessVsByteCode = CompileShader(L"shader\\PostProcess.hlsl", nullptr, "VSFullscreen", "vs_5_1");
 	m_postProcessPsByteCode = CompileShader(L"shader\\PostProcess.hlsl", nullptr, "PSPostProcess", "ps_5_1");
+
+	m_terrainVsByteCode = CompileShader(L"shader\\Terrain.hlsl", nullptr, "VS", "vs_5_1");
+	m_terrainPsByteCode = CompileShader(L"shader\\Terrain.hlsl", nullptr, "PS", "ps_5_1");
 }
 
 void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
@@ -361,7 +364,6 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 		m_billboardRootSignature = CreateRootSignature(device, desc);
 	}
 
-	// ѕост-процессинг
 	{
 		D3D12_DESCRIPTOR_RANGE srvRanges[3] = {};
 		srvRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -434,6 +436,60 @@ void RenderingSystem::BuildRootSignatures(ID3D12Device* device)
 			D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
 
 		m_postProcessRootSignature = CreateRootSignature(device, desc);
+	}
+
+	// Terrain
+	{
+		D3D12_DESCRIPTOR_RANGE srvRange = {};
+		srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srvRange.NumDescriptors = 3;   // heightmap, diffuse, normal
+		srvRange.BaseShaderRegister = 0;   // t0
+		srvRange.RegisterSpace = 0;
+		srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+		D3D12_ROOT_PARAMETER params[3] = {};
+
+		// b0 Ч TerrainConstants
+		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[0].Descriptor.ShaderRegister = 0;
+		params[0].Descriptor.RegisterSpace = 0;
+		params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		// b1 Ч PassConstants
+		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[1].Descriptor.ShaderRegister = 1;
+		params[1].Descriptor.RegisterSpace = 0;
+		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		// t0..t2 Ч SRV table
+		params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[2].DescriptorTable.NumDescriptorRanges = 1;
+		params[2].DescriptorTable.pDescriptorRanges = &srvRange;
+		params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		D3D12_STATIC_SAMPLER_DESC samp = {};
+		samp.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+		samp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samp.MipLODBias = 0.0f;
+		samp.MaxAnisotropy = 1;
+		samp.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		samp.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+		samp.MinLOD = 0.0f;
+		samp.MaxLOD = D3D12_FLOAT32_MAX;
+		samp.ShaderRegister = 0;
+		samp.RegisterSpace = 0;
+		samp.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		D3D12_ROOT_SIGNATURE_DESC desc = {};
+		desc.NumParameters = _countof(params);
+		desc.pParameters = params;
+		desc.NumStaticSamplers = 1;
+		desc.pStaticSamplers = &samp;
+		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+		m_terrainRootSignature = CreateRootSignature(device, desc);
 	}
 }
 
@@ -741,7 +797,6 @@ void RenderingSystem::BuildPSOs(
 		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_billboardPso)));
 	}
 
-	// пост-процессинг
 	{
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
 		psoDesc.InputLayout = { nullptr, 0 };             
@@ -762,5 +817,56 @@ void RenderingSystem::BuildPSOs(
 		psoDesc.SampleDesc.Quality = 0;
 
 		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_postProcessPso)));
+	}
+
+	// Terrain
+	{
+		D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
+			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
+			  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		};
+
+		D3D12_BLEND_DESC blendDesc = {};
+		blendDesc.IndependentBlendEnable = FALSE;
+		for (UINT i = 0; i < Gbuffer::kTargetCount; ++i) {
+			D3D12_RENDER_TARGET_BLEND_DESC rt = {};
+			rt.BlendEnable = FALSE;
+			rt.LogicOpEnable = FALSE;
+			rt.SrcBlend = D3D12_BLEND_ONE;
+			rt.DestBlend = D3D12_BLEND_ZERO;
+			rt.BlendOp = D3D12_BLEND_OP_ADD;
+			rt.SrcBlendAlpha = D3D12_BLEND_ONE;
+			rt.DestBlendAlpha = D3D12_BLEND_ZERO;
+			rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+			rt.LogicOp = D3D12_LOGIC_OP_NOOP;
+			rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+			blendDesc.RenderTarget[i] = rt;
+		}
+
+		D3D12_DEPTH_STENCIL_DESC dsDesc = {};
+		dsDesc.DepthEnable = TRUE;
+		dsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+		dsDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+		dsDesc.StencilEnable = FALSE;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+		psoDesc.InputLayout = { inputLayout, _countof(inputLayout) };
+		psoDesc.pRootSignature = m_terrainRootSignature.Get();
+		psoDesc.VS = { m_terrainVsByteCode->GetBufferPointer(), m_terrainVsByteCode->GetBufferSize() };
+		psoDesc.PS = { m_terrainPsByteCode->GetBufferPointer(), m_terrainPsByteCode->GetBufferSize() };
+		psoDesc.RasterizerState = DefaultRasterizer(D3D12_CULL_MODE_BACK);
+		psoDesc.BlendState = blendDesc;
+		psoDesc.DepthStencilState = dsDesc;
+		psoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+		psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		psoDesc.NumRenderTargets = Gbuffer::kTargetCount;
+		psoDesc.RTVFormats[0] = Gbuffer::kAlbedoFormat;
+		psoDesc.RTVFormats[1] = Gbuffer::kNormalFormat;
+		psoDesc.RTVFormats[2] = Gbuffer::kMRFormat;
+		psoDesc.DSVFormat = depthStencilFormat;
+		psoDesc.SampleDesc.Count = 1;
+		psoDesc.SampleDesc.Quality = 0;
+
+		ThrowIfFailed(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_terrainPso)));
 	}
 }

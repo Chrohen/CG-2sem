@@ -21,8 +21,11 @@
   <ItemGroup>
     <ClCompile Include="src\Framework.cpp" />
     <ClCompile Include="src\GBuffer.cpp" />
+    <ClCompile Include="src\HeightMap.cpp" />
     <ClCompile Include="src\Octree.cpp" />
+    <ClCompile Include="src\QuadTree.cpp" />
     <ClCompile Include="src\RenderingSystem.cpp" />
+    <ClCompile Include="src\Terrain.cpp" />
     <ClCompile Include="src\Timer.cpp" />
     <ClCompile Include="src\Window.cpp" />
     <ClCompile Include="src\winMain.cpp" />
@@ -55,9 +58,12 @@
     <ClInclude Include="include\Dx12Common.hpp" />
     <ClInclude Include="include\Framework.hpp" />
     <ClInclude Include="include\GBuffer.hpp" />
+    <ClInclude Include="include\HeightMap.h" />
     <ClInclude Include="include\Octree.hpp" />
+    <ClInclude Include="include\QuadTree.h" />
     <ClInclude Include="include\RenderingSystem.hpp" />
     <ClInclude Include="include\RenderStructs.hpp" />
+    <ClInclude Include="include\Terrain.h" />
     <ClInclude Include="include\Timer.hpp" />
     <ClInclude Include="include\tiny_obj_loader.h" />
     <ClInclude Include="include\UploadBuffer.hpp" />
@@ -80,6 +86,11 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="shader\Shadow.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shader\Terrain.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
@@ -107,7 +118,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
@@ -196,6 +207,7 @@
   <ImportGroup Label="ExtensionTargets">
     <Import Project="packages\directxtex_desktop_win10.2026.5.8.1\build\native\directxtex_desktop_win10.targets" Condition="Exists('packages\directxtex_desktop_win10.2026.5.8.1\build\native\directxtex_desktop_win10.targets')" />
     <Import Project="packages\directxtk12_uwp.2026.5.8.1\build\native\directxtk12_uwp.targets" Condition="Exists('packages\directxtk12_uwp.2026.5.8.1\build\native\directxtk12_uwp.targets')" />
+    <Import Project="packages\directxtex_uwp.2026.5.8.1\build\native\directxtex_uwp.targets" Condition="Exists('packages\directxtex_uwp.2026.5.8.1\build\native\directxtex_uwp.targets')" />
   </ImportGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
@@ -203,5 +215,6 @@
     </PropertyGroup>
     <Error Condition="!Exists('packages\directxtex_desktop_win10.2026.5.8.1\build\native\directxtex_desktop_win10.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\directxtex_desktop_win10.2026.5.8.1\build\native\directxtex_desktop_win10.targets'))" />
     <Error Condition="!Exists('packages\directxtk12_uwp.2026.5.8.1\build\native\directxtk12_uwp.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\directxtk12_uwp.2026.5.8.1\build\native\directxtk12_uwp.targets'))" />
+    <Error Condition="!Exists('packages\directxtex_uwp.2026.5.8.1\build\native\directxtex_uwp.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\directxtex_uwp.2026.5.8.1\build\native\directxtex_uwp.targets'))" />
   </Target>
 </Project>

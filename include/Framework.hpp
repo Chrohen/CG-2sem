@@ -17,6 +17,8 @@
 #include <wrl.h>
 #include <vector>
 #include "Octree.hpp"
+#include "Terrain.h"
+
 #pragma comment(lib, "windowscodecs.lib")
 
 struct AnimatedPointLight {
@@ -225,7 +227,6 @@ private:
 
 	std::vector<AnimatedPointLight> m_fallingLights;
 
-	// Вода
 	void BuildWaterPlane();
 	ComPtr<ID3D12Resource>   m_waterVB;
 	D3D12_VERTEX_BUFFER_VIEW m_waterVBV;
@@ -234,7 +235,6 @@ private:
 	std::unique_ptr<UploadBuffer<MaterialConstants>> m_waterMaterialCB;
 
 
-	// Кубы
 	void GenerateCubes(int count);
 	void DrawCubes();
 
@@ -270,6 +270,12 @@ private:
 
 	void BuildOctree();
 
+	std::unique_ptr<Terrain> m_terrain;
+	int m_visibleTerrainLeaves = 0;
+	bool m_showTerrain = true;
+
+	void BuildTerrain();
+
 	bool m_showOctree = false;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> m_octreeCB;
 	void DrawOctree();
@@ -284,7 +290,6 @@ private:
 
 	void DrawBillboards();
 
-	// Тени
 	ComPtr<ID3D12Resource>mShadowMap;
 	ComPtr<ID3D12DescriptorHeap>mShadowDsvHeap;
 	UINT mShadowMapSrvIndex;

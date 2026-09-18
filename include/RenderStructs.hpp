@@ -163,10 +163,26 @@ struct alignas(16) BillboardConstants {
 	DirectX::XMFLOAT4 Color;
 };
 
+struct alignas(16) TerrainConstants {
+	DirectX::XMFLOAT2 UVMin;
+	DirectX::XMFLOAT2 UVMax;
+	DirectX::XMFLOAT2 WorldCenterXZ;
+	float             WorldSizeXZ;
+	float             HeightScale;
+	float             InvHeightmapSize;
+	int               Level;
+	float             WorldOffsetY;
+	float             Metalness;
+	float             Roughness;
+	float             _pad[3];
+};
+
+
 static_assert(sizeof(ObjectConstants) % 16 == 0, "ObjectConstants must be 16-byte aligned sized.");
 static_assert(sizeof(PassConstants) % 16 == 0, "PassConstants must be 16-byte aligned sized.");
 static_assert(sizeof(MaterialConstants) == 96, "MaterialConstants size must be 64 bytes (match HLSL cbuffer)");
 static_assert(alignof(MaterialConstants) == 16, "MaterialConstants must be 16-byte aligned");
 static_assert(sizeof(LightingConstants) % 16 == 0, "LightingConstants must be 16-byte aligned sized.");
+static_assert(sizeof(TerrainConstants) == 64, "TerrainConstants must be 64 bytes");
 
 #endif // RENDER_STRUCTS_HPP

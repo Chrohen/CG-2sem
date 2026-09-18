@@ -32,6 +32,10 @@ public:
 
 	ID3D12RootSignature* PostProcessRootSignature() const { return m_postProcessRootSignature.Get(); }
 	ID3D12PipelineState* PostProcessPSO() const { return m_postProcessPso.Get(); }
+
+	ID3D12RootSignature* TerrainRootSignature() const { return m_terrainRootSignature.Get(); }
+	ID3D12PipelineState* TerrainPSO() const { return m_terrainPso.Get(); }
+
 private:
 	ComPtr<ID3DBlob> m_geometryVsByteCode;
 	ComPtr<ID3DBlob> m_geometryPsByteCode;
@@ -75,6 +79,12 @@ private:
 
 	ComPtr<ID3DBlob> m_postProcessVsByteCode;
 	ComPtr<ID3DBlob> m_postProcessPsByteCode;
+
+	ComPtr<ID3DBlob> m_terrainVsByteCode;
+	ComPtr<ID3DBlob> m_terrainPsByteCode;
+
+	ComPtr<ID3D12RootSignature> m_terrainRootSignature;
+	ComPtr<ID3D12PipelineState> m_terrainPso;
 };
 
 #endif // RENDERING_SYSTEM_HPP

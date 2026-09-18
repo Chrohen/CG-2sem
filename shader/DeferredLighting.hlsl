@@ -414,6 +414,7 @@ float4 PSLighting(VSOut pin) : SV_Target
     float3 prefilteredColor = gPrefilteredEnvMap.SampleLevel(gSamLinear, R, roughness * MAX_REFLECTION_LOD).rgb;
     float2 brdf = gBrdfLUT.Sample(gSamLinear, float2(NdotV, roughness)).rg;
     float3 specularIBL = prefilteredColor * (F_IBL * brdf.x + brdf.y);
+    specularIBL *= (1.0 - roughness * 0.85);
     
     float3 ambient = (kD * diffuseIBL + specularIBL);
     

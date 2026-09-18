@@ -80,6 +80,7 @@ bool Framework::Init()
 	BuildShadowResources();
 	BuildShadowRootSignature();
 	BuildShadowPSO();
+	BuildTerrain();
 
 	OnResize();
 
@@ -191,6 +192,11 @@ LRESULT Framework::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		if (wParam == 'M') {
 			m_useBeckmann = !m_useBeckmann;
 			OutputDebugStringA(m_useBeckmann ? "Beckmann PBR enabled\n" : "GGX PBR enabled\n");
+			return 0;
+		}
+		if (wParam == 'L') {
+			m_showTerrain = !m_showTerrain;
+			OutputDebugStringA(m_showTerrain ? "[Terrain] ON\n" : "[Terrain] OFF\n");
 			return 0;
 		}
 		m_keyDown[static_cast<uint8_t>(wParam)] = true;
@@ -364,6 +370,11 @@ void Framework::Update(const double& dt)
 			woss << L" | Frustum | Visible: " << m_visibleCubeCount << L" / " << m_cubeInstances.size();
 		else
 			woss << L" | Cubes: " << m_cubeInstances.size();
+
+		if (m_terrain) {
+			woss << L" | Terrain leaves: " << m_visibleTerrainLeaves
+				<< L" (max depth " << m_terrain->GetQuadTree().MaxDepthReached() << L")";
+		}
 		SetWindowText(MainWnd(), woss.str().c_str());
 	}
 
@@ -385,7 +396,7 @@ void Framework::Update(const double& dt)
 	XMVECTOR right = XMVector3Normalize(XMVector3Cross(up, forward));
 
 	float speed = m_cameraMoveSpeed;
-	if (m_keyDown[VK_SHIFT]) speed *= 3.0f;
+	if (m_keyDown[VK_SHIFT]) speed *= 30.0f;
 	float step = speed * static_cast<float>(dt);
 
 	XMVECTOR move = XMVectorZero();
@@ -409,6 +420,19 @@ void Framework::Update(const double& dt)
 	float aspect = (float)m_clientWidth / (float)m_clientHeight;
 	XMMATRIX proj = XMMatrixPerspectiveFovLH(0.25f * XM_PI, aspect, 0.1f, 1000.0f);
 	XMMATRIX viewProj = view * proj;
+
+	if (m_terrain && m_showTerrain)
+	{
+		m_terrain->Update(m_camPos, m_camTarget, m_camUp,
+			0.25f * XM_PI,
+			aspect,
+			0.1f,
+			5000.0f,
+			static_cast<UINT>(m_clientWidth),
+			static_cast<UINT>(m_clientHeight));
+
+		m_visibleTerrainLeaves = static_cast<int>(m_terrain->VisibleLeaves().size());
+	}
 
 	PassConstants pass;
 	XMStoreFloat4x4(&pass.ViewProj, XMMatrixTranspose(viewProj));
@@ -753,6 +777,15 @@ void Framework::Draw()
 	DrawOctree();
 	DrawBillboards();
 
+	// Terrain
+	if (m_terrain && m_showTerrain) {
+		m_terrain->Draw(
+			m_commandList.Get(),
+			m_renderingSystem.TerrainPSO(),
+			m_renderingSystem.TerrainRootSignature(),
+			m_passCB->Resource()->GetGPUVirtualAddress());
+	}
+
 	// Отрисовка воды
 	if (m_waterVB && m_waterVertexCount > 0)
 	{
@@ -956,7 +989,7 @@ void Framework::InitD3D12Device()
 	if (SUCCEEDED(m_device.As(&infoQueue))) {
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
 		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
-		infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
+	//	infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
 	}
 #endif
 }
@@ -2161,8 +2194,8 @@ Framework::FrustumPlanes Framework::ComputeFrustumPlanes() const
 
 	float aspect = (float)m_clientWidth / (float)m_clientHeight;
 	float fovY = 0.25f * XM_PI;
-	float nearZ = 0.1f;
-	float farZ = 1000.0f;
+	float nearZ = 0.001f;
+	float farZ = 2000.0f;
 
 	float tanHalfFovY = tanf(fovY * 0.5f);
 	float tanHalfFovX = tanHalfFovY * aspect;
@@ -2255,6 +2288,30 @@ void Framework::BuildOctree()
 
 		OutputDebugStringA(("Total bounds center: " + std::to_string(totalBounds.center.x) + ", " + std::to_string(totalBounds.center.y) + ", " + std::to_string(totalBounds.center.z) + "\n").c_str());
 		OutputDebugStringA(("Total bounds half: " + std::to_string(totalBounds.halfExtents.x) + ", " + std::to_string(totalBounds.halfExtents.y) + ", " + std::to_string(totalBounds.halfExtents.z) + "\n").c_str());
+	}
+}
+
+void Framework::BuildTerrain()
+{
+	const float worldSizeXZ = 2000.0f;
+	const float heightScale = 700.0f;
+	const int   maxLevel = 8;
+
+	m_terrain = std::make_unique<Terrain>();
+	const bool ok = m_terrain->Init(
+		m_device.Get(),
+		m_commandQueue.Get(),
+		L"assets\\terrain\\heightmap.png",
+		worldSizeXZ,
+		heightScale,
+		0.0f, // X-offset
+		0.0f, // Z-offset
+		-700.0f, // Y-offset
+		maxLevel);
+
+	if (!ok) {
+		OutputDebugStringW(L"[Framework] Terrain init failed!\n");
+		m_terrain.reset();
 	}
 }
 
